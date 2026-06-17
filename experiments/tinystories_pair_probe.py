@@ -10,6 +10,8 @@ and compares:
     token_phase_lowrank: lower-parameter phase residuals
     token_complex:    learned amplitude and phase residuals
     token_complex_role: separate left/right amplitude and phase residuals
+    token_complex_signed: signed complex inner-product readout
+    token_complex_role_signed: role-specific signed complex readout
     real_diag:        learned real token embeddings + relation diagonal
 
 The task is binary: distinguish true local word pairs from random negatives.
@@ -316,6 +318,27 @@ def phase_overlap_logits(
     return logit_scale * score + logit_bias
 
 
+def signed_phase_logits(
+    left_real: torch.Tensor,
+    left_imag: torch.Tensor,
+    right_real: torch.Tensor,
+    right_imag: torch.Tensor,
+    rel_phase: torch.Tensor,
+    real_weight: torch.Tensor,
+    imag_weight: torch.Tensor,
+    logit_scale: torch.Tensor,
+    logit_bias: torch.Tensor,
+) -> torch.Tensor:
+    c = torch.cos(rel_phase)
+    s = torch.sin(rel_phase)
+    rotated_real = right_real * c - right_imag * s
+    rotated_imag = right_real * s + right_imag * c
+    inner_real = (left_real * rotated_real + left_imag * rotated_imag).sum(dim=-1)
+    inner_imag = (left_real * rotated_imag - left_imag * rotated_real).sum(dim=-1)
+    score = real_weight * inner_real + imag_weight * inner_imag
+    return logit_scale * score + logit_bias
+
+
 class FrozenPhaseModel(nn.Module):
     def __init__(self, token_real: torch.Tensor, token_imag: torch.Tensor, relations: int) -> None:
         super().__init__()
@@ -508,6 +531,50 @@ class TokenComplexRoleModel(nn.Module):
         )
 
 
+class TokenComplexSignedModel(TokenComplexModel):
+    def __init__(self, token_real: torch.Tensor, token_imag: torch.Tensor, relations: int) -> None:
+        super().__init__(token_real, token_imag, relations)
+        self.real_weight = nn.Parameter(torch.tensor(1.0))
+        self.imag_weight = nn.Parameter(torch.tensor(0.0))
+
+    def forward(self, left: torch.Tensor, rel: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
+        left_real, left_imag = self.token_state(left)
+        right_real, right_imag = self.token_state(right)
+        return signed_phase_logits(
+            left_real,
+            left_imag,
+            right_real,
+            right_imag,
+            self.rel_phase(rel),
+            self.real_weight,
+            self.imag_weight,
+            self.logit_scale,
+            self.logit_bias,
+        )
+
+
+class TokenComplexRoleSignedModel(TokenComplexRoleModel):
+    def __init__(self, token_real: torch.Tensor, token_imag: torch.Tensor, relations: int) -> None:
+        super().__init__(token_real, token_imag, relations)
+        self.real_weight = nn.Parameter(torch.tensor(1.0))
+        self.imag_weight = nn.Parameter(torch.tensor(0.0))
+
+    def forward(self, left: torch.Tensor, rel: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
+        left_real, left_imag = self.token_state(left, "left")
+        right_real, right_imag = self.token_state(right, "right")
+        return signed_phase_logits(
+            left_real,
+            left_imag,
+            right_real,
+            right_imag,
+            self.rel_phase(rel),
+            self.real_weight,
+            self.imag_weight,
+            self.logit_scale,
+            self.logit_bias,
+        )
+
+
 class FrozenAmplitudeModel(nn.Module):
     def __init__(self, token_amp: torch.Tensor, relations: int) -> None:
         super().__init__()
@@ -596,6 +663,10 @@ def train_one(
         model = TokenComplexModel(token_real, token_imag, relations)
     elif model_name == "token_complex_role":
         model = TokenComplexRoleModel(token_real, token_imag, relations)
+    elif model_name == "token_complex_signed":
+        model = TokenComplexSignedModel(token_real, token_imag, relations)
+    elif model_name == "token_complex_role_signed":
+        model = TokenComplexRoleSignedModel(token_real, token_imag, relations)
     elif model_name == "real_diag":
         model = RealDiagModel(token_real.shape[0], dim, relations)
     else:
@@ -670,7 +741,8 @@ def main() -> None:
         type=str,
         default=(
             "frozen_phase,frozen_amplitude,token_phase,token_phase_lowrank,"
-            "token_complex,token_complex_role,real_diag"
+            "token_complex,token_complex_role,token_complex_signed,"
+            "token_complex_role_signed,real_diag"
         ),
     )
     parser.add_argument("--out", type=str, default="runs/tinystories_pair_probe.csv")
@@ -701,6 +773,8 @@ def main() -> None:
         "token_phase_lowrank",
         "token_complex",
         "token_complex_role",
+        "token_complex_signed",
+        "token_complex_role_signed",
         "real_diag",
     }
     unknown_models = sorted(set(models) - known_models)

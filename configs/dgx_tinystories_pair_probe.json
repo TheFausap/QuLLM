@@ -21,6 +21,8 @@
     "token_phase",
     "token_complex",
     "token_complex_role",
+    "token_complex_signed",
+    "token_complex_role_signed",
     "real_diag"
   ]
 }
