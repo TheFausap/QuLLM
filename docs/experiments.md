@@ -1,5 +1,7 @@
 # Experiments
 
+For a running interpretation of observed results, see [results_notes.md](results_notes.md).
+
 ## Phase Relation Scaling
 
 `experiments/phase_relation_scaling.py` tests whether a phase/unitary inductive bias becomes more valuable as data grows.
