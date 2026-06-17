@@ -102,3 +102,5 @@ Expected pattern:
 - `no_relation_phase` should fail on relation-dependent cases.
 - `amplitude_feature` should detect same-group pairs but fail on wrong-phase same-group negatives.
 - `real_feature_mlp` is a strong classical feature baseline. If it ties the phase model, the signal is not uniquely quantum-like; compare data efficiency and parameter count.
+
+The CSV includes `trainable_params` and, for phase-relation models, `phase_mean_error` / `phase_max_error` in radians against the synthetic teacher's relation phase shifts. Use those diagnostics to distinguish optimization failure from representational limits.

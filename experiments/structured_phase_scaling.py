@@ -294,6 +294,22 @@ MODEL_TYPES = {
 }
 
 
+def trainable_parameter_count(model: nn.Module) -> int:
+    return sum(param.numel() for param in model.parameters() if param.requires_grad)
+
+
+@torch.no_grad()
+def relation_phase_error(model: nn.Module, space: StructuredPhaseSpace) -> tuple[float | None, float | None]:
+    if not hasattr(model, "rel_phase"):
+        return None, None
+
+    learned = model.rel_phase.weight.detach().flatten()
+    step = math.tau / space.phase_classes
+    target = -torch.arange(space.phase_classes, device=space.device, dtype=learned.dtype) * step
+    error = torch.atan2(torch.sin(learned - target), torch.cos(learned - target)).abs()
+    return float(error.mean().item()), float(error.max().item())
+
+
 @torch.no_grad()
 def evaluate(
     model: nn.Module,
@@ -326,6 +342,7 @@ def train_one(
     learning_rate: float,
 ) -> dict[str, float | str | int]:
     model = MODEL_TYPES[model_name](space).to(space.device)
+    trainable_params = trainable_parameter_count(model)
     optimizer = torch.optim.AdamW(
         [param for param in model.parameters() if param.requires_grad],
         lr=learning_rate,
@@ -347,18 +364,37 @@ def train_one(
             optimizer.step()
 
     metrics = evaluate(model, test_data, batch_size)
-    metrics.update({"model": model_name, "train_size": count, "seconds": round(time.time() - started, 3)})
+    phase_mean_error, phase_max_error = relation_phase_error(model, space)
+    metrics.update(
+        {
+            "model": model_name,
+            "train_size": count,
+            "seconds": round(time.time() - started, 3),
+            "trainable_params": trainable_params,
+            "phase_mean_error": phase_mean_error,
+            "phase_max_error": phase_max_error,
+        }
+    )
     return metrics
 
 
 def write_results(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    fields = ["train_size", "model", "accuracy", "loss", "seconds"]
+    fields = [
+        "train_size",
+        "model",
+        "accuracy",
+        "loss",
+        "seconds",
+        "trainable_params",
+        "phase_mean_error",
+        "phase_max_error",
+    ]
     with open(path, "w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
         for row in rows:
-            writer.writerow({field: row[field] for field in fields})
+            writer.writerow({field: "" if row.get(field) is None else row.get(field, "") for field in fields})
 
 
 def main() -> None:
@@ -434,9 +470,16 @@ def main() -> None:
                 learning_rate=learning_rate,
             )
             rows.append(row)
+            phase_diag = ""
+            if row.get("phase_mean_error") is not None:
+                phase_diag = (
+                    f" phase_mean_err={row['phase_mean_error']:.3f}"
+                    f" phase_max_err={row['phase_max_error']:.3f}"
+                )
             print(
                 f"  {model_name:18s} "
-                f"acc={row['accuracy']:.4f} loss={row['loss']:.4f} seconds={row['seconds']}"
+                f"acc={row['accuracy']:.4f} loss={row['loss']:.4f} "
+                f"params={row['trainable_params']} seconds={row['seconds']}{phase_diag}"
             )
 
     out = ROOT / args.out

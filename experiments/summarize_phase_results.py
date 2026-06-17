@@ -14,11 +14,11 @@ def main() -> None:
     args = parser.parse_args()
 
     path = Path(args.csv_path)
-    rows_by_size: dict[int, dict[str, float]] = defaultdict(dict)
+    rows_by_size: dict[int, dict[str, dict[str, str]]] = defaultdict(dict)
     with open(path, "r", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
         for row in reader:
-            rows_by_size[int(row["train_size"])][row["model"]] = float(row["accuracy"])
+            rows_by_size[int(row["train_size"])][row["model"]] = row
 
     print(f"results: {path}")
     print()
@@ -28,13 +28,18 @@ def main() -> None:
             (name for name in ("phase_unitary", "phase_margin", "phase_feature") if name in results),
             None,
         )
-        reference = results.get(reference_name) if reference_name else None
+        reference = float(results[reference_name]["accuracy"]) if reference_name else None
         print(f"train_size={train_size}")
-        for model, accuracy in sorted(results.items(), key=lambda item: item[0]):
+        for model, row in sorted(results.items(), key=lambda item: item[0]):
+            accuracy = float(row["accuracy"])
             gap = ""
             if reference is not None and model != reference_name:
                 gap = f"  {reference_name}_gap={reference - accuracy:+.4f}"
-            print(f"  {model:16s} accuracy={accuracy:.4f}{gap}")
+            params = row.get("trainable_params", "")
+            param_text = f" params={params}" if params else ""
+            phase_mean_error = row.get("phase_mean_error", "")
+            phase_text = f" phase_mean_err={float(phase_mean_error):.3f}" if phase_mean_error else ""
+            print(f"  {model:18s} accuracy={accuracy:.4f}{gap}{param_text}{phase_text}")
         print()
 
 
