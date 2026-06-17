@@ -182,3 +182,10 @@ Run on DGX:
 python3 experiments/tinystories_attention_probe.py --config configs/dgx_tinystories_attention_probe.json --device cuda
 python3 experiments/summarize_phase_results.py runs/tinystories_attention_probe.csv
 ```
+
+Depth sweep:
+
+```bash
+python3 experiments/tinystories_attention_probe.py --config configs/dgx_tinystories_attention_depth_sweep.json --device cuda
+python3 experiments/summarize_phase_results.py runs/tinystories_attention_depth_sweep.csv
+```

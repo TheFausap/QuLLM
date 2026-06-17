@@ -554,6 +554,7 @@ def train_one(
         {
             "model": model_name,
             "train_size": count,
+            "layers": layers,
             "trainable_params": trainable_parameter_count(model),
             "seconds": round(time.time() - started, 3),
         }
@@ -569,7 +570,7 @@ def parse_ints(value: str | list[int]) -> list[int]:
 
 def write_results(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    fields = ["train_size", "model", "accuracy", "loss", "seconds", "trainable_params"]
+    fields = ["train_size", "layers", "model", "accuracy", "loss", "seconds", "trainable_params"]
     with open(path, "w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
@@ -591,6 +592,7 @@ def main() -> None:
     parser.add_argument("--context", type=int, default=16)
     parser.add_argument("--dim", type=int, default=64)
     parser.add_argument("--layers", type=int, default=2)
+    parser.add_argument("--layer-values", type=str, default=None)
     parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--batch-size", type=int, default=512)
     parser.add_argument("--learning-rate", type=float, default=3e-3)
@@ -617,12 +619,14 @@ def main() -> None:
     test_examples = int(config.get("test_examples", args.test_examples))
     context = int(config.get("context", args.context))
     dim = int(config.get("dim", args.dim))
-    layers = int(config.get("layers", args.layers))
+    layers_config = config.get("layer_values", config.get("layers", args.layers))
+    layer_values = parse_ints(layers_config) if isinstance(layers_config, (list, str)) else [int(layers_config)]
     epochs = int(config.get("epochs", args.epochs))
     batch_size = int(config.get("batch_size", args.batch_size))
     learning_rate = float(config.get("learning_rate", args.learning_rate))
     seed = int(config.get("seed", args.seed))
     cache_path = config.get("cache", args.cache)
+    out_path = str(config.get("out", args.out))
     models_raw = config.get("models", args.models)
     models = models_raw if isinstance(models_raw, list) else [item.strip() for item in models_raw.split(",")]
     unknown = sorted(set(models) - set(MODEL_TYPES))
@@ -635,7 +639,7 @@ def main() -> None:
     print(f"config={args.config or '<cli/defaults>'}")
     print(f"dataset={dataset_name} split={split} device={device}")
     print(f"models={','.join(models)}")
-    print(f"dim={dim} context={context} layers={layers} epochs={epochs} batch_size={batch_size}")
+    print(f"dim={dim} context={context} layers={','.join(str(item) for item in layer_values)} epochs={epochs} batch_size={batch_size}")
 
     vocab_list, train_cpu, test_cpu = load_or_build_cached_data(
         cache_path=cache_path,
@@ -656,29 +660,31 @@ def main() -> None:
         train_data = tuple(tensor[:train_size] for tensor in train_cpu)
         train_data = move_dataset(train_data, device)
         print(f"\ntrain_size={train_size}")
-        for model_name in models:
-            set_seed(seed)
-            row = train_one(
-                model_name=model_name,
-                train_data=train_data,
-                test_data=test_data,
-                vocab_size=len(vocab_list),
-                dim=dim,
-                context=context,
-                layers=layers,
-                epochs=epochs,
-                batch_size=batch_size,
-                learning_rate=learning_rate,
-                device=device,
-            )
-            rows.append(row)
-            print(
-                f"  {model_name:24s} "
-                f"acc={row['accuracy']:.4f} loss={row['loss']:.4f} "
-                f"params={row['trainable_params']} seconds={row['seconds']}"
-            )
+        for layers in layer_values:
+            print(f"  layers={layers}")
+            for model_name in models:
+                set_seed(seed)
+                row = train_one(
+                    model_name=model_name,
+                    train_data=train_data,
+                    test_data=test_data,
+                    vocab_size=len(vocab_list),
+                    dim=dim,
+                    context=context,
+                    layers=layers,
+                    epochs=epochs,
+                    batch_size=batch_size,
+                    learning_rate=learning_rate,
+                    device=device,
+                )
+                rows.append(row)
+                print(
+                    f"    {model_name:24s} "
+                    f"acc={row['accuracy']:.4f} loss={row['loss']:.4f} "
+                    f"params={row['trainable_params']} seconds={row['seconds']}"
+                )
 
-    out = ROOT / args.out
+    out = ROOT / out_path
     write_results(out, rows)
     print(f"\nwrote {out}")
 
