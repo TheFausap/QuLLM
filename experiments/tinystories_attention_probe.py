@@ -519,6 +519,35 @@ def trainable_parameter_count(model: nn.Module) -> int:
     return sum(param.numel() for param in model.parameters() if param.requires_grad)
 
 
+@torch.no_grad()
+def model_diagnostics(model: nn.Module) -> dict[str, float]:
+    diagnostics: dict[str, float] = {}
+    if isinstance(model, ComplexAttentionStackedProbe):
+        mix_values = torch.stack([torch.sigmoid(layer.mix.detach()) for layer in model.layers])
+        phase_tensors = []
+        for layer in model.layers:
+            phase_tensors.extend(
+                [
+                    layer.q_phase.detach(),
+                    layer.k_phase.detach(),
+                    layer.v_phase.detach(),
+                    layer.out_phase.detach(),
+                ]
+            )
+        phases = torch.cat([tensor.flatten() for tensor in phase_tensors])
+        diagnostics["mix_mean"] = float(mix_values.mean().item())
+        diagnostics["mix_min"] = float(mix_values.min().item())
+        diagnostics["mix_max"] = float(mix_values.max().item())
+        diagnostics["phase_abs_mean"] = float(phases.abs().mean().item())
+        diagnostics["phase_abs_max"] = float(phases.abs().max().item())
+    if isinstance(model, RealAttentionStackedProbe):
+        gate_values = torch.stack([torch.sigmoid(layer.gate.detach()) for layer in model.layers])
+        diagnostics["gate_mean"] = float(gate_values.mean().item())
+        diagnostics["gate_min"] = float(gate_values.min().item())
+        diagnostics["gate_max"] = float(gate_values.max().item())
+    return diagnostics
+
+
 def train_one(
     model_name: str,
     train_data: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
@@ -550,6 +579,7 @@ def train_one(
             optimizer.step()
 
     metrics = evaluate(model, test_data, batch_size)
+    metrics.update(model_diagnostics(model))
     metrics.update(
         {
             "model": model_name,
@@ -570,12 +600,28 @@ def parse_ints(value: str | list[int]) -> list[int]:
 
 def write_results(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    fields = ["train_size", "layers", "model", "accuracy", "loss", "seconds", "trainable_params"]
+    fields = [
+        "train_size",
+        "layers",
+        "model",
+        "accuracy",
+        "loss",
+        "seconds",
+        "trainable_params",
+        "mix_mean",
+        "mix_min",
+        "mix_max",
+        "phase_abs_mean",
+        "phase_abs_max",
+        "gate_mean",
+        "gate_min",
+        "gate_max",
+    ]
     with open(path, "w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
         for row in rows:
-            writer.writerow({field: row[field] for field in fields})
+            writer.writerow({field: "" if row.get(field) is None else row.get(field, "") for field in fields})
 
 
 def main() -> None:
@@ -678,10 +724,18 @@ def main() -> None:
                     device=device,
                 )
                 rows.append(row)
+                diag = ""
+                if row.get("mix_mean") is not None:
+                    diag = (
+                        f" mix={row['mix_mean']:.3f}"
+                        f" phase_abs={row['phase_abs_mean']:.3f}"
+                    )
+                elif row.get("gate_mean") is not None:
+                    diag = f" gate={row['gate_mean']:.3f}"
                 print(
                     f"    {model_name:24s} "
                     f"acc={row['accuracy']:.4f} loss={row['loss']:.4f} "
-                    f"params={row['trainable_params']} seconds={row['seconds']}"
+                    f"params={row['trainable_params']} seconds={row['seconds']}{diag}"
                 )
 
     out = ROOT / out_path

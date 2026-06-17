@@ -1,4 +1,4 @@
-"""Summarize phase relation scaling CSV output without extra dependencies."""
+"""Summarize experiment CSV output without extra dependencies."""
 
 from __future__ import annotations
 
@@ -8,32 +8,50 @@ from collections import defaultdict
 from pathlib import Path
 
 
+def maybe_float(text: str) -> float | None:
+    if text == "":
+        return None
+    return float(text)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("csv_path", nargs="?", default="runs/phase_relation_scaling.csv")
     args = parser.parse_args()
 
     path = Path(args.csv_path)
-    rows_by_size: dict[int, dict[str, dict[str, str]]] = defaultdict(dict)
+    rows_by_group: dict[tuple[int, str], dict[str, dict[str, str]]] = defaultdict(dict)
     with open(path, "r", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
         for row in reader:
-            rows_by_size[int(row["train_size"])][row["model"]] = row
+            layers = row.get("layers", "")
+            rows_by_group[(int(row["train_size"]), layers)][row["model"]] = row
 
     print(f"results: {path}")
     print()
-    for train_size in sorted(rows_by_size):
-        results = rows_by_size[train_size]
+    for train_size, layers in sorted(rows_by_group, key=lambda item: (item[0], int(item[1] or "0"))):
+        results = rows_by_group[(train_size, layers)]
         reference_name = next(
             (
                 name
-                for name in ("phase_unitary", "phase_margin_fixed", "phase_margin", "phase_feature")
+                for name in (
+                    "phase_unitary",
+                    "phase_margin_fixed",
+                    "phase_margin",
+                    "phase_feature",
+                    "complex_attention",
+                    "complex_attention_stacked",
+                    "complex_diag",
+                )
                 if name in results
             ),
             None,
         )
         reference = float(results[reference_name]["accuracy"]) if reference_name else None
-        print(f"train_size={train_size}")
+        header = f"train_size={train_size}"
+        if layers:
+            header += f" layers={layers}"
+        print(header)
         for model, row in sorted(results.items(), key=lambda item: item[0]):
             accuracy = float(row["accuracy"])
             gap = ""
@@ -57,7 +75,15 @@ def main() -> None:
                     f" same_neg={float(row['same_group_negative_accuracy']):.4f}"
                     f" diff_neg={float(row['diff_group_negative_accuracy']):.4f}"
                 )
-            print(f"  {model:18s} accuracy={accuracy:.4f}{gap}{param_text}{phase_text}{rule_text}{breakdown}")
+            diagnostics = ""
+            for label in ("mix_mean", "mix_min", "mix_max", "phase_abs_mean", "phase_abs_max", "gate_mean", "gate_min", "gate_max"):
+                value = maybe_float(row.get(label, ""))
+                if value is not None:
+                    diagnostics += f" {label}={value:.3f}"
+            print(
+                f"  {model:26s} accuracy={accuracy:.4f}"
+                f"{gap}{param_text}{phase_text}{rule_text}{breakdown}{diagnostics}"
+            )
         print()
 
 
