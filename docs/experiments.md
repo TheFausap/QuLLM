@@ -99,10 +99,11 @@ Expected pattern:
 
 - `phase_feature` should learn quickly because the correct hypothesis is a tiny set of relation phase shifts.
 - `phase_margin` uses the same phase hypothesis with a sharper discrete-class measurement threshold.
+- `phase_margin_fixed` is the cleanest pure phase-rule model: relation phases are trainable, while the measurement scale and threshold are fixed.
 - `no_relation_phase` should fail on relation-dependent cases.
 - `amplitude_feature` should detect same-group pairs but fail on wrong-phase same-group negatives.
 - `real_feature_mlp` is a strong classical feature baseline. If it ties the phase model, the signal is not uniquely quantum-like; compare data efficiency and parameter count.
 
 The CSV includes `trainable_params` and, for phase-relation models, `phase_mean_error` / `phase_max_error` in radians against the synthetic teacher's relation phase shifts. Use those diagnostics to distinguish optimization failure from representational limits.
 
-For phase-margin models, the CSV also includes `phase_rule_accuracy`, which applies the learned relation phases with a fixed deterministic threshold and ignores learned scale/bias calibration. If `phase_rule_accuracy` is higher than normal accuracy, the phase representation is correct and the readout calibration is the remaining failure mode.
+For phase-margin models, the CSV also includes `phase_rule_accuracy`, which applies the learned relation phases with a fixed deterministic threshold and ignores learned scale/bias calibration. If `phase_rule_accuracy` is higher than normal accuracy, the phase representation is correct and the readout calibration is the remaining failure mode. In current runs, `phase_margin_fixed` is the preferred reference because it tests the phase rule without extra calibration degrees of freedom.

@@ -25,7 +25,11 @@ def main() -> None:
     for train_size in sorted(rows_by_size):
         results = rows_by_size[train_size]
         reference_name = next(
-            (name for name in ("phase_unitary", "phase_margin", "phase_feature") if name in results),
+            (
+                name
+                for name in ("phase_unitary", "phase_margin_fixed", "phase_margin", "phase_feature")
+                if name in results
+            ),
             None,
         )
         reference = float(results[reference_name]["accuracy"]) if reference_name else None
