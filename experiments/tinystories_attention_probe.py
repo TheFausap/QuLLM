@@ -365,6 +365,7 @@ class RealAttentionLayer(nn.Module):
         self.v = nn.Linear(dim, dim, bias=False)
         self.out = nn.Linear(dim, dim, bias=False)
         self.norm = nn.LayerNorm(dim)
+        self.gate = nn.Parameter(torch.tensor(-2.0))
 
     def forward(self, candidate_state: torch.Tensor, context_state: torch.Tensor) -> torch.Tensor:
         q = self.q(candidate_state).unsqueeze(1)
@@ -372,7 +373,7 @@ class RealAttentionLayer(nn.Module):
         v = self.v(context_state)
         attn = torch.softmax((q * k).sum(dim=-1) / math.sqrt(k.shape[-1]), dim=-1)
         pooled = (attn.unsqueeze(-1) * v).sum(dim=1)
-        return self.norm(candidate_state + self.out(pooled))
+        return self.norm(candidate_state + torch.sigmoid(self.gate) * self.out(pooled))
 
 
 class RealAttentionStackedProbe(nn.Module):
@@ -381,6 +382,7 @@ class RealAttentionStackedProbe(nn.Module):
         self.token = nn.Embedding(vocab_size, dim)
         self.pos = nn.Embedding(context, dim)
         self.layers = nn.ModuleList(RealAttentionLayer(dim) for _ in range(layers))
+        self.readout = nn.Linear(dim, dim, bias=False)
         self.logit_scale = nn.Parameter(torch.tensor(1.0))
         self.logit_bias = nn.Parameter(torch.tensor(0.0))
 
@@ -391,7 +393,7 @@ class RealAttentionStackedProbe(nn.Module):
         candidate_state = candidate_embed
         for layer in self.layers:
             candidate_state = layer(candidate_state, context_state)
-        score = (candidate_state * candidate_embed).sum(dim=-1) / math.sqrt(candidate_state.shape[-1])
+        score = (self.readout(candidate_state) * candidate_embed).sum(dim=-1) / math.sqrt(candidate_state.shape[-1])
         return self.logit_scale * score + self.logit_bias
 
 
@@ -402,7 +404,7 @@ class ComplexAttentionLayer(nn.Module):
         self.k_phase = nn.Parameter(torch.zeros(dim))
         self.v_phase = nn.Parameter(torch.zeros(dim))
         self.out_phase = nn.Parameter(torch.zeros(dim))
-        self.mix = nn.Parameter(torch.tensor(0.5))
+        self.mix = nn.Parameter(torch.tensor(-2.0))
 
     @staticmethod
     def rotate(real: torch.Tensor, imag: torch.Tensor, phase: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -445,6 +447,7 @@ class ComplexAttentionStackedProbe(nn.Module):
         self.imag = nn.Embedding(vocab_size, dim)
         self.pos_phase = nn.Embedding(context, dim)
         self.layers = nn.ModuleList(ComplexAttentionLayer(dim) for _ in range(layers))
+        self.readout_phase = nn.Parameter(torch.zeros(dim))
         self.real_weight = nn.Parameter(torch.tensor(1.0))
         self.imag_weight = nn.Parameter(torch.tensor(0.0))
         self.logit_scale = nn.Parameter(torch.tensor(1.0))
@@ -474,6 +477,7 @@ class ComplexAttentionStackedProbe(nn.Module):
         candidate_real, candidate_imag = self.normalize(candidate_base_real, candidate_base_imag)
         for layer in self.layers:
             candidate_real, candidate_imag = layer(candidate_real, candidate_imag, context_real, context_imag)
+        candidate_real, candidate_imag = self.rotate(candidate_real, candidate_imag, self.readout_phase)
         inner_real = (candidate_real * candidate_base_real + candidate_imag * candidate_base_imag).sum(dim=-1)
         inner_imag = (candidate_real * candidate_base_imag - candidate_imag * candidate_base_real).sum(dim=-1)
         score = (self.real_weight * inner_real + self.imag_weight * inner_imag) / math.sqrt(candidate_real.shape[-1])
