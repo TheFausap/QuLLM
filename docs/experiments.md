@@ -138,6 +138,8 @@ This probe compares:
 
 - `frozen_phase`: fixed complex feature states plus learned relation phases.
 - `frozen_amplitude`: same fixed feature amplitudes with phase removed.
+- `token_phase`: fixed feature-prepared amplitudes and base phases, plus learned per-token phase residuals and relation phases.
+- `token_phase_lowrank`: lower-parameter phase residuals factorized through a small rank.
 - `real_diag`: learned real token embeddings and relation diagonals.
 
-The important question is whether frozen phase features beat frozen amplitude features, and how much learned real embeddings need scale to overtake them.
+The important first question is whether frozen phase features beat frozen amplitude features. If they do not, compare `token_phase` / `token_phase_lowrank` against `real_diag`: this asks whether a quantum-native state parameterization can learn natural lexical structure with fewer parameters than unconstrained real token embeddings.

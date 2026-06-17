@@ -8,9 +8,10 @@
   "test_examples": 100000,
   "window": 3,
   "dim": 64,
+  "phase_rank": 16,
   "epochs": 3,
   "batch_size": 1024,
   "learning_rate": 0.003,
   "seed": 23,
-  "models": ["frozen_phase", "frozen_amplitude", "real_diag"]
+  "models": ["frozen_phase", "frozen_amplitude", "token_phase_lowrank", "token_phase", "real_diag"]
 }
