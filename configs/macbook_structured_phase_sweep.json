@@ -1,0 +1,13 @@
+{
+  "groups": 64,
+  "phase_classes": 8,
+  "variants_per_bucket": 8,
+  "test_variants_per_bucket": 2,
+  "train_sizes": [512, 2048, 8192, 32768, 131072],
+  "test_size": 32768,
+  "epochs": 10,
+  "batch_size": 1024,
+  "learning_rate": 0.01,
+  "seed": 11,
+  "models": ["phase_feature", "no_relation_phase", "amplitude_feature", "real_feature_mlp"]
+}

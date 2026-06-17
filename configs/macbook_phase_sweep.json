@@ -1,0 +1,12 @@
+{
+  "vocab_size": 2048,
+  "dim": 32,
+  "relations": 8,
+  "train_sizes": [512, 2048, 8192, 32768],
+  "test_size": 8192,
+  "epochs": 12,
+  "batch_size": 512,
+  "learning_rate": 0.003,
+  "seed": 7,
+  "models": ["phase_unitary", "real_diag", "amplitude_only", "phase_scrambled"]
+}

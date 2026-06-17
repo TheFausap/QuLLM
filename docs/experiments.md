@@ -1,0 +1,103 @@
+# Experiments
+
+## Phase Relation Scaling
+
+`experiments/phase_relation_scaling.py` tests whether a phase/unitary inductive bias becomes more valuable as data grows.
+
+The teacher generates labels from:
+
+```text
+score(left, relation, right) = |<left| U_relation |right>|^2
+```
+
+where `U_relation` is a diagonal unitary. The students are:
+
+- `phase_unitary`: normalized complex token states plus learned diagonal relation phases.
+- `real_diag`: real-valued diagonal bilinear baseline.
+- `amplitude_only`: normalized nonnegative amplitudes with no complex phase.
+- `phase_scrambled`: complex token phases, but relation phases disabled.
+
+The important comparison is not only final accuracy. Watch the scaling curve as training size increases. A useful phase effect should appear as a widening gap between `phase_unitary` and the ablations.
+
+## MacBook Run
+
+```bash
+python3 -m pip install -r requirements.txt
+python3 experiments/phase_relation_scaling.py --config configs/macbook_phase_sweep.json
+```
+
+On Apple Silicon, the script uses `mps` automatically when available. You can force CPU with:
+
+```bash
+python3 experiments/phase_relation_scaling.py --config configs/macbook_phase_sweep.json --device cpu
+```
+
+## DGX Run
+
+```bash
+python3 -m pip install -r requirements.txt
+python3 experiments/phase_relation_scaling.py --config configs/dgx_phase_sweep.json --device cuda
+```
+
+The DGX config is deliberately larger:
+
+- 65,536 token states,
+- 128 complex dimensions,
+- 32 relation operators,
+- up to 1,048,576 training triples.
+
+## Reading Results
+
+The script writes CSV results to:
+
+```text
+runs/phase_relation_scaling.csv
+```
+
+Summarize the run with:
+
+```bash
+python3 experiments/summarize_phase_results.py runs/phase_relation_scaling.csv
+```
+
+The expected sanity pattern is:
+
+1. `phase_unitary` should learn the teacher fastest.
+2. `phase_scrambled` should underperform because relation phase is disabled.
+3. `amplitude_only` should struggle because the teacher's labels depend on interference.
+4. `real_diag` may improve with scale but should need more data or parameters.
+
+If `phase_unitary` does not separate from the ablations on this synthetic task, the current encoding hypothesis is weak and should be revised before natural-language tests.
+
+## Structured Phase Scaling
+
+`experiments/structured_phase_scaling.py` is the better first probe for the tokenizer idea.
+
+It creates synthetic tokens with three factors:
+
+- `group`: amplitude support, analogous to a semantic or morphological basis.
+- `phase_class`: a discrete relative phase, analogous to relational role.
+- `variant`: surface identity; test examples use held-out variants.
+
+The teacher marks a pair positive when two tokens share a group and their phase classes match the relation's phase shift. This gives us an OOV-like test: a model must use the structured token factors rather than memorize token IDs.
+
+Run on Mac:
+
+```bash
+python3 experiments/structured_phase_scaling.py --config configs/macbook_structured_phase_sweep.json
+python3 experiments/summarize_phase_results.py runs/structured_phase_scaling.csv
+```
+
+Run on DGX:
+
+```bash
+python3 experiments/structured_phase_scaling.py --config configs/dgx_structured_phase_sweep.json --device cuda
+python3 experiments/summarize_phase_results.py runs/structured_phase_scaling.csv
+```
+
+Expected pattern:
+
+- `phase_feature` should learn quickly because the correct hypothesis is a tiny set of relation phase shifts.
+- `no_relation_phase` should fail on relation-dependent cases.
+- `amplitude_feature` should detect same-group pairs but fail on wrong-phase same-group negatives.
+- `real_feature_mlp` is a strong classical feature baseline. If it ties the phase model, the signal is not uniquely quantum-like; compare data efficiency and parameter count.
