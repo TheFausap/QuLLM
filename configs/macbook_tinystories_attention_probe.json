@@ -8,6 +8,7 @@
   "test_examples": 100000,
   "context": 16,
   "dim": 64,
+  "layers": 3,
   "epochs": 3,
   "batch_size": 512,
   "learning_rate": 0.003,
@@ -19,6 +20,8 @@
     "complex_attention_nophase",
     "complex_attention_born",
     "complex_attention",
+    "real_attention_stacked",
+    "complex_attention_stacked",
     "real_attention_wide"
   ]
 }

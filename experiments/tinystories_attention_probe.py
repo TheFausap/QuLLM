@@ -224,7 +224,8 @@ def move_dataset(
 
 
 class RealAttentionProbe(nn.Module):
-    def __init__(self, vocab_size: int, dim: int, context: int) -> None:
+    def __init__(self, vocab_size: int, dim: int, context: int, layers: int = 1) -> None:
+        del layers
         super().__init__()
         self.token = nn.Embedding(vocab_size, dim)
         self.pos = nn.Embedding(context, dim)
@@ -249,7 +250,8 @@ class RealAttentionProbe(nn.Module):
 
 
 class ComplexAttentionProbe(nn.Module):
-    def __init__(self, vocab_size: int, dim: int, context: int) -> None:
+    def __init__(self, vocab_size: int, dim: int, context: int, layers: int = 1) -> None:
+        del layers
         super().__init__()
         self.real = nn.Embedding(vocab_size, dim)
         self.imag = nn.Embedding(vocab_size, dim)
@@ -306,8 +308,8 @@ class ComplexAttentionProbe(nn.Module):
 class ComplexAttentionNoPhaseProbe(ComplexAttentionProbe):
     """Complex attention ablation with trainable phase rotations disabled."""
 
-    def __init__(self, vocab_size: int, dim: int, context: int) -> None:
-        super().__init__(vocab_size, dim, context)
+    def __init__(self, vocab_size: int, dim: int, context: int, layers: int = 1) -> None:
+        super().__init__(vocab_size, dim, context, layers)
         self.pos_phase.weight.requires_grad_(False)
         self.q_phase.requires_grad_(False)
         self.k_phase.requires_grad_(False)
@@ -346,13 +348,136 @@ class ComplexAttentionBornProbe(ComplexAttentionProbe):
 
 
 class RealAttentionWideProbe(RealAttentionProbe):
-    def __init__(self, vocab_size: int, dim: int, context: int) -> None:
-        super().__init__(vocab_size, dim * 2, context)
+    def __init__(self, vocab_size: int, dim: int, context: int, layers: int = 1) -> None:
+        super().__init__(vocab_size, dim * 2, context, layers)
 
 
 class ComplexAttentionHalfDimProbe(ComplexAttentionProbe):
-    def __init__(self, vocab_size: int, dim: int, context: int) -> None:
-        super().__init__(vocab_size, max(1, dim // 2), context)
+    def __init__(self, vocab_size: int, dim: int, context: int, layers: int = 1) -> None:
+        super().__init__(vocab_size, max(1, dim // 2), context, layers)
+
+
+class RealAttentionLayer(nn.Module):
+    def __init__(self, dim: int) -> None:
+        super().__init__()
+        self.q = nn.Linear(dim, dim, bias=False)
+        self.k = nn.Linear(dim, dim, bias=False)
+        self.v = nn.Linear(dim, dim, bias=False)
+        self.out = nn.Linear(dim, dim, bias=False)
+        self.norm = nn.LayerNorm(dim)
+
+    def forward(self, candidate_state: torch.Tensor, context_state: torch.Tensor) -> torch.Tensor:
+        q = self.q(candidate_state).unsqueeze(1)
+        k = self.k(context_state)
+        v = self.v(context_state)
+        attn = torch.softmax((q * k).sum(dim=-1) / math.sqrt(k.shape[-1]), dim=-1)
+        pooled = (attn.unsqueeze(-1) * v).sum(dim=1)
+        return self.norm(candidate_state + self.out(pooled))
+
+
+class RealAttentionStackedProbe(nn.Module):
+    def __init__(self, vocab_size: int, dim: int, context: int, layers: int = 2) -> None:
+        super().__init__()
+        self.token = nn.Embedding(vocab_size, dim)
+        self.pos = nn.Embedding(context, dim)
+        self.layers = nn.ModuleList(RealAttentionLayer(dim) for _ in range(layers))
+        self.logit_scale = nn.Parameter(torch.tensor(1.0))
+        self.logit_bias = nn.Parameter(torch.tensor(0.0))
+
+    def forward(self, context_ids: torch.Tensor, candidate: torch.Tensor) -> torch.Tensor:
+        positions = torch.arange(context_ids.shape[1], device=context_ids.device)
+        context_state = self.token(context_ids) + self.pos(positions)
+        candidate_embed = self.token(candidate)
+        candidate_state = candidate_embed
+        for layer in self.layers:
+            candidate_state = layer(candidate_state, context_state)
+        score = (candidate_state * candidate_embed).sum(dim=-1) / math.sqrt(candidate_state.shape[-1])
+        return self.logit_scale * score + self.logit_bias
+
+
+class ComplexAttentionLayer(nn.Module):
+    def __init__(self, dim: int) -> None:
+        super().__init__()
+        self.q_phase = nn.Parameter(torch.zeros(dim))
+        self.k_phase = nn.Parameter(torch.zeros(dim))
+        self.v_phase = nn.Parameter(torch.zeros(dim))
+        self.out_phase = nn.Parameter(torch.zeros(dim))
+        self.mix = nn.Parameter(torch.tensor(0.5))
+
+    @staticmethod
+    def rotate(real: torch.Tensor, imag: torch.Tensor, phase: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        c = torch.cos(phase)
+        s = torch.sin(phase)
+        return real * c - imag * s, real * s + imag * c
+
+    @staticmethod
+    def normalize(real: torch.Tensor, imag: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        scale = torch.sqrt((real.square() + imag.square()).sum(dim=-1, keepdim=True).clamp_min(1e-8))
+        return real / scale, imag / scale
+
+    def forward(
+        self,
+        candidate_real: torch.Tensor,
+        candidate_imag: torch.Tensor,
+        context_real: torch.Tensor,
+        context_imag: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        q_real, q_imag = self.rotate(candidate_real, candidate_imag, self.q_phase)
+        k_real, k_imag = self.rotate(context_real, context_imag, self.k_phase)
+        v_real, v_imag = self.rotate(context_real, context_imag, self.v_phase)
+        q_real, q_imag = self.normalize(q_real, q_imag)
+        k_real, k_imag = self.normalize(k_real, k_imag)
+        compat = (q_real.unsqueeze(1) * k_real + q_imag.unsqueeze(1) * k_imag).sum(dim=-1)
+        attn = torch.softmax(compat * math.sqrt(k_real.shape[-1]), dim=-1)
+        pooled_real = (attn.unsqueeze(-1) * v_real).sum(dim=1)
+        pooled_imag = (attn.unsqueeze(-1) * v_imag).sum(dim=1)
+        pooled_real, pooled_imag = self.rotate(pooled_real, pooled_imag, self.out_phase)
+        mix = torch.sigmoid(self.mix)
+        next_real = candidate_real + mix * pooled_real
+        next_imag = candidate_imag + mix * pooled_imag
+        return self.normalize(next_real, next_imag)
+
+
+class ComplexAttentionStackedProbe(nn.Module):
+    def __init__(self, vocab_size: int, dim: int, context: int, layers: int = 2) -> None:
+        super().__init__()
+        self.real = nn.Embedding(vocab_size, dim)
+        self.imag = nn.Embedding(vocab_size, dim)
+        self.pos_phase = nn.Embedding(context, dim)
+        self.layers = nn.ModuleList(ComplexAttentionLayer(dim) for _ in range(layers))
+        self.real_weight = nn.Parameter(torch.tensor(1.0))
+        self.imag_weight = nn.Parameter(torch.tensor(0.0))
+        self.logit_scale = nn.Parameter(torch.tensor(1.0))
+        self.logit_bias = nn.Parameter(torch.tensor(0.0))
+        nn.init.normal_(self.real.weight, std=(2 * dim) ** -0.5)
+        nn.init.normal_(self.imag.weight, std=(2 * dim) ** -0.5)
+        nn.init.zeros_(self.pos_phase.weight)
+
+    @staticmethod
+    def rotate(real: torch.Tensor, imag: torch.Tensor, phase: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        c = torch.cos(phase)
+        s = torch.sin(phase)
+        return real * c - imag * s, real * s + imag * c
+
+    @staticmethod
+    def normalize(real: torch.Tensor, imag: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        scale = torch.sqrt((real.square() + imag.square()).sum(dim=-1, keepdim=True).clamp_min(1e-8))
+        return real / scale, imag / scale
+
+    def forward(self, context_ids: torch.Tensor, candidate: torch.Tensor) -> torch.Tensor:
+        positions = torch.arange(context_ids.shape[1], device=context_ids.device)
+        context_real = self.real(context_ids)
+        context_imag = self.imag(context_ids)
+        context_real, context_imag = self.rotate(context_real, context_imag, self.pos_phase(positions))
+        candidate_base_real = self.real(candidate)
+        candidate_base_imag = self.imag(candidate)
+        candidate_real, candidate_imag = self.normalize(candidate_base_real, candidate_base_imag)
+        for layer in self.layers:
+            candidate_real, candidate_imag = layer(candidate_real, candidate_imag, context_real, context_imag)
+        inner_real = (candidate_real * candidate_base_real + candidate_imag * candidate_base_imag).sum(dim=-1)
+        inner_imag = (candidate_real * candidate_base_imag - candidate_imag * candidate_base_real).sum(dim=-1)
+        score = (self.real_weight * inner_real + self.imag_weight * inner_imag) / math.sqrt(candidate_real.shape[-1])
+        return self.logit_scale * score + self.logit_bias
 
 
 MODEL_TYPES = {
@@ -362,6 +487,8 @@ MODEL_TYPES = {
     "complex_attention_born": ComplexAttentionBornProbe,
     "real_attention_wide": RealAttentionWideProbe,
     "complex_attention_halfdim": ComplexAttentionHalfDimProbe,
+    "real_attention_stacked": RealAttentionStackedProbe,
+    "complex_attention_stacked": ComplexAttentionStackedProbe,
 }
 
 
@@ -395,12 +522,13 @@ def train_one(
     vocab_size: int,
     dim: int,
     context: int,
+    layers: int,
     epochs: int,
     batch_size: int,
     learning_rate: float,
     device: torch.device,
 ) -> dict[str, Any]:
-    model = MODEL_TYPES[model_name](vocab_size, dim, context).to(device)
+    model = MODEL_TYPES[model_name](vocab_size, dim, context, layers).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)
     contexts, candidates, labels = train_data
     count = labels.numel()
@@ -458,6 +586,7 @@ def main() -> None:
     parser.add_argument("--test-examples", type=int, default=100000)
     parser.add_argument("--context", type=int, default=16)
     parser.add_argument("--dim", type=int, default=64)
+    parser.add_argument("--layers", type=int, default=2)
     parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--batch-size", type=int, default=512)
     parser.add_argument("--learning-rate", type=float, default=3e-3)
@@ -466,7 +595,10 @@ def main() -> None:
     parser.add_argument(
         "--models",
         type=str,
-        default="real_attention,complex_attention_halfdim,complex_attention,real_attention_wide",
+        default=(
+            "real_attention,complex_attention_halfdim,complex_attention,"
+            "real_attention_stacked,complex_attention_stacked,real_attention_wide"
+        ),
     )
     parser.add_argument("--out", type=str, default="runs/tinystories_attention_probe.csv")
     args = parser.parse_args()
@@ -481,6 +613,7 @@ def main() -> None:
     test_examples = int(config.get("test_examples", args.test_examples))
     context = int(config.get("context", args.context))
     dim = int(config.get("dim", args.dim))
+    layers = int(config.get("layers", args.layers))
     epochs = int(config.get("epochs", args.epochs))
     batch_size = int(config.get("batch_size", args.batch_size))
     learning_rate = float(config.get("learning_rate", args.learning_rate))
@@ -498,7 +631,7 @@ def main() -> None:
     print(f"config={args.config or '<cli/defaults>'}")
     print(f"dataset={dataset_name} split={split} device={device}")
     print(f"models={','.join(models)}")
-    print(f"dim={dim} context={context} epochs={epochs} batch_size={batch_size}")
+    print(f"dim={dim} context={context} layers={layers} epochs={epochs} batch_size={batch_size}")
 
     vocab_list, train_cpu, test_cpu = load_or_build_cached_data(
         cache_path=cache_path,
@@ -528,6 +661,7 @@ def main() -> None:
                 vocab_size=len(vocab_list),
                 dim=dim,
                 context=context,
+                layers=layers,
                 epochs=epochs,
                 batch_size=batch_size,
                 learning_rate=learning_rate,
