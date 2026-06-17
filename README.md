@@ -46,6 +46,13 @@ python3 experiments/structured_phase_scaling.py --config configs/macbook_structu
 python3 experiments/summarize_phase_results.py runs/structured_phase_scaling.csv
 ```
 
+The first less-controlled natural-text probe uses TinyStories:
+
+```bash
+python3 experiments/tinystories_pair_probe.py --config configs/macbook_tinystories_pair_probe.json
+python3 experiments/summarize_phase_results.py runs/tinystories_pair_probe.csv
+```
+
 ## Next Experiments
 
 1. Compare feature-state encoding against ID lookup embeddings on a tiny synthetic grammar task.

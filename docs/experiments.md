@@ -107,3 +107,37 @@ Expected pattern:
 The CSV includes `trainable_params` and, for phase-relation models, `phase_mean_error` / `phase_max_error` in radians against the synthetic teacher's relation phase shifts. Use those diagnostics to distinguish optimization failure from representational limits.
 
 For phase-margin models, the CSV also includes `phase_rule_accuracy`, which applies the learned relation phases with a fixed deterministic threshold and ignores learned scale/bias calibration. If `phase_rule_accuracy` is higher than normal accuracy, the phase representation is correct and the readout calibration is the remaining failure mode. In current runs, `phase_margin_fixed` is the preferred reference because it tests the phase rule without extra calibration degrees of freedom.
+
+## TinyStories Pair Probe
+
+`experiments/tinystories_pair_probe.py` is the first less-controlled natural-text experiment.
+
+It streams `roneneldan/TinyStories` from Hugging Face and converts stories into binary local relation triples:
+
+```text
+(word_i, signed_relative_position, word_j)
+```
+
+Positive examples are real local pairs from the text. Negative examples replace `word_j` with a unigram-sampled random token. This is a noisy word-relation task, closer to language modeling than the synthetic phase benchmark while still cheap enough for scale sweeps.
+
+Run on Mac:
+
+```bash
+python3 experiments/tinystories_pair_probe.py --config configs/macbook_tinystories_pair_probe.json
+python3 experiments/summarize_phase_results.py runs/tinystories_pair_probe.csv
+```
+
+Run on DGX:
+
+```bash
+python3 experiments/tinystories_pair_probe.py --config configs/dgx_tinystories_pair_probe.json --device cuda
+python3 experiments/summarize_phase_results.py runs/tinystories_pair_probe.csv
+```
+
+This probe compares:
+
+- `frozen_phase`: fixed complex feature states plus learned relation phases.
+- `frozen_amplitude`: same fixed feature amplitudes with phase removed.
+- `real_diag`: learned real token embeddings and relation diagonals.
+
+The important question is whether frozen phase features beat frozen amplitude features, and how much learned real embeddings need scale to overtake them.
