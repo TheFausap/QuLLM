@@ -8,6 +8,8 @@ and compares:
     frozen_amplitude: same token amplitudes with phase removed
     token_phase:      feature-initialized states + learned token phase residuals
     token_phase_lowrank: lower-parameter phase residuals
+    token_complex:    learned amplitude and phase residuals
+    token_complex_role: separate left/right amplitude and phase residuals
     real_diag:        learned real token embeddings + relation diagonal
 
 The task is binary: distinguish true local word pairs from random negatives.
@@ -184,6 +186,86 @@ def build_examples(
     return tensorize(train_rows[:max_train_examples]), tensorize(test_rows[:test_examples])
 
 
+def cache_metadata(
+    dataset_name: str,
+    split: str,
+    vocab_size: int,
+    vocab_stories: int,
+    window: int,
+    max_train_examples: int,
+    test_examples: int,
+    seed: int,
+) -> dict[str, Any]:
+    return {
+        "run_version": RUN_VERSION,
+        "dataset": dataset_name,
+        "split": split,
+        "vocab_size": vocab_size,
+        "vocab_stories": vocab_stories,
+        "window": window,
+        "max_train_examples": max_train_examples,
+        "test_examples": test_examples,
+        "seed": seed,
+    }
+
+
+def load_or_build_cached_data(
+    cache_path: str | None,
+    dataset_name: str,
+    split: str,
+    vocab_size: int,
+    vocab_stories: int,
+    window: int,
+    max_train_examples: int,
+    test_examples: int,
+    seed: int,
+) -> tuple[list[str], tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor], tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]]:
+    expected = cache_metadata(
+        dataset_name=dataset_name,
+        split=split,
+        vocab_size=vocab_size,
+        vocab_stories=vocab_stories,
+        window=window,
+        max_train_examples=max_train_examples,
+        test_examples=test_examples,
+        seed=seed,
+    )
+
+    if cache_path:
+        path = ROOT / cache_path
+        if path.exists():
+            print(f"loading cached examples from {path}")
+            payload = torch.load(path, map_location="cpu", weights_only=False)
+            if payload.get("metadata") != expected:
+                print("cache metadata mismatch; rebuilding examples")
+            else:
+                return payload["vocab"], payload["train"], payload["test"]
+
+    print("building vocabulary...")
+    vocab_list = build_vocab(dataset_name, split, vocab_size, vocab_stories)
+    vocab = {token: idx for idx, token in enumerate(vocab_list)}
+    print(f"vocab_size={len(vocab_list)}")
+
+    print("building examples...")
+    train_cpu, test_cpu = build_examples(
+        dataset_name=dataset_name,
+        split=split,
+        vocab=vocab,
+        window=window,
+        max_train_examples=max_train_examples,
+        test_examples=test_examples,
+        seed=seed,
+    )
+
+    if cache_path:
+        path = ROOT / cache_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save({"metadata": expected, "vocab": vocab_list, "train": train_cpu, "test": test_cpu}, path)
+        print(f"saved cached examples to {path}")
+
+    return vocab_list, train_cpu, test_cpu
+
+
 def tensorize(rows: list[tuple[int, int, int, int]]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     if not rows:
         raise ValueError("no rows generated")
@@ -215,6 +297,25 @@ def make_feature_states(vocab: list[str], dim: int) -> tuple[torch.Tensor, torch
     return real / complex_scale, imag / complex_scale, amp / amp_scale
 
 
+def phase_overlap_logits(
+    left_real: torch.Tensor,
+    left_imag: torch.Tensor,
+    right_real: torch.Tensor,
+    right_imag: torch.Tensor,
+    rel_phase: torch.Tensor,
+    logit_scale: torch.Tensor,
+    logit_bias: torch.Tensor,
+) -> torch.Tensor:
+    c = torch.cos(rel_phase)
+    s = torch.sin(rel_phase)
+    rotated_real = right_real * c - right_imag * s
+    rotated_imag = right_real * s + right_imag * c
+    inner_real = (left_real * rotated_real + left_imag * rotated_imag).sum(dim=-1)
+    inner_imag = (left_real * rotated_imag - left_imag * rotated_real).sum(dim=-1)
+    score = inner_real.square() + inner_imag.square()
+    return logit_scale * score + logit_bias
+
+
 class FrozenPhaseModel(nn.Module):
     def __init__(self, token_real: torch.Tensor, token_imag: torch.Tensor, relations: int) -> None:
         super().__init__()
@@ -230,15 +331,15 @@ class FrozenPhaseModel(nn.Module):
         left_imag = self.token_imag[left]
         right_real = self.token_real[right]
         right_imag = self.token_imag[right]
-        phase = self.rel_phase(rel)
-        c = torch.cos(phase)
-        s = torch.sin(phase)
-        rotated_real = right_real * c - right_imag * s
-        rotated_imag = right_real * s + right_imag * c
-        inner_real = (left_real * rotated_real + left_imag * rotated_imag).sum(dim=-1)
-        inner_imag = (left_real * rotated_imag - left_imag * rotated_real).sum(dim=-1)
-        score = inner_real.square() + inner_imag.square()
-        return self.logit_scale * score + self.logit_bias
+        return phase_overlap_logits(
+            left_real,
+            left_imag,
+            right_real,
+            right_imag,
+            self.rel_phase(rel),
+            self.logit_scale,
+            self.logit_bias,
+        )
 
 
 class TokenPhaseModel(nn.Module):
@@ -266,15 +367,15 @@ class TokenPhaseModel(nn.Module):
     def forward(self, left: torch.Tensor, rel: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
         left_real, left_imag = self.token_state(left)
         right_real, right_imag = self.token_state(right)
-        phase = self.rel_phase(rel)
-        c = torch.cos(phase)
-        s = torch.sin(phase)
-        rotated_real = right_real * c - right_imag * s
-        rotated_imag = right_real * s + right_imag * c
-        inner_real = (left_real * rotated_real + left_imag * rotated_imag).sum(dim=-1)
-        inner_imag = (left_real * rotated_imag - left_imag * rotated_real).sum(dim=-1)
-        score = inner_real.square() + inner_imag.square()
-        return self.logit_scale * score + self.logit_bias
+        return phase_overlap_logits(
+            left_real,
+            left_imag,
+            right_real,
+            right_imag,
+            self.rel_phase(rel),
+            self.logit_scale,
+            self.logit_bias,
+        )
 
 
 class TokenPhaseLowRankModel(nn.Module):
@@ -305,15 +406,106 @@ class TokenPhaseLowRankModel(nn.Module):
     def forward(self, left: torch.Tensor, rel: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
         left_real, left_imag = self.token_state(left)
         right_real, right_imag = self.token_state(right)
-        phase = self.rel_phase(rel)
-        c = torch.cos(phase)
-        s = torch.sin(phase)
-        rotated_real = right_real * c - right_imag * s
-        rotated_imag = right_real * s + right_imag * c
-        inner_real = (left_real * rotated_real + left_imag * rotated_imag).sum(dim=-1)
-        inner_imag = (left_real * rotated_imag - left_imag * rotated_real).sum(dim=-1)
-        score = inner_real.square() + inner_imag.square()
-        return self.logit_scale * score + self.logit_bias
+        return phase_overlap_logits(
+            left_real,
+            left_imag,
+            right_real,
+            right_imag,
+            self.rel_phase(rel),
+            self.logit_scale,
+            self.logit_bias,
+        )
+
+
+class TokenComplexModel(nn.Module):
+    def __init__(self, token_real: torch.Tensor, token_imag: torch.Tensor, relations: int) -> None:
+        super().__init__()
+        base_amp = torch.sqrt(token_real.square() + token_imag.square())
+        base_phase = torch.atan2(token_imag, token_real)
+        self.register_buffer("base_amp_logits", torch.log(torch.expm1((6.0 * base_amp).clamp_min(1e-6))))
+        self.register_buffer("base_phase", base_phase)
+        self.amp_delta = nn.Embedding(token_real.shape[0], token_real.shape[1])
+        self.phase_delta = nn.Embedding(token_real.shape[0], token_real.shape[1])
+        self.rel_phase = nn.Embedding(relations, token_real.shape[1])
+        self.logit_scale = nn.Parameter(torch.tensor(8.0))
+        self.logit_bias = nn.Parameter(torch.tensor(0.0))
+        nn.init.zeros_(self.amp_delta.weight)
+        nn.init.zeros_(self.phase_delta.weight)
+        nn.init.zeros_(self.rel_phase.weight)
+
+    def token_state(self, token: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        amp = F.softplus(self.base_amp_logits[token] + self.amp_delta(token)) + 1e-6
+        phase = self.base_phase[token] + self.phase_delta(token)
+        real = amp * torch.cos(phase)
+        imag = amp * torch.sin(phase)
+        scale = torch.sqrt((real.square() + imag.square()).sum(dim=-1, keepdim=True).clamp_min(1e-8))
+        return real / scale, imag / scale
+
+    def forward(self, left: torch.Tensor, rel: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
+        left_real, left_imag = self.token_state(left)
+        right_real, right_imag = self.token_state(right)
+        return phase_overlap_logits(
+            left_real,
+            left_imag,
+            right_real,
+            right_imag,
+            self.rel_phase(rel),
+            self.logit_scale,
+            self.logit_bias,
+        )
+
+
+class TokenComplexRoleModel(nn.Module):
+    def __init__(self, token_real: torch.Tensor, token_imag: torch.Tensor, relations: int) -> None:
+        super().__init__()
+        base_amp = torch.sqrt(token_real.square() + token_imag.square())
+        base_phase = torch.atan2(token_imag, token_real)
+        self.register_buffer("base_amp_logits", torch.log(torch.expm1((6.0 * base_amp).clamp_min(1e-6))))
+        self.register_buffer("base_phase", base_phase)
+        self.left_amp_delta = nn.Embedding(token_real.shape[0], token_real.shape[1])
+        self.left_phase_delta = nn.Embedding(token_real.shape[0], token_real.shape[1])
+        self.right_amp_delta = nn.Embedding(token_real.shape[0], token_real.shape[1])
+        self.right_phase_delta = nn.Embedding(token_real.shape[0], token_real.shape[1])
+        self.rel_phase = nn.Embedding(relations, token_real.shape[1])
+        self.logit_scale = nn.Parameter(torch.tensor(8.0))
+        self.logit_bias = nn.Parameter(torch.tensor(0.0))
+        for table in (
+            self.left_amp_delta,
+            self.left_phase_delta,
+            self.right_amp_delta,
+            self.right_phase_delta,
+            self.rel_phase,
+        ):
+            nn.init.zeros_(table.weight)
+
+    def token_state(self, token: torch.Tensor, side: str) -> tuple[torch.Tensor, torch.Tensor]:
+        if side == "left":
+            amp_delta = self.left_amp_delta(token)
+            phase_delta = self.left_phase_delta(token)
+        elif side == "right":
+            amp_delta = self.right_amp_delta(token)
+            phase_delta = self.right_phase_delta(token)
+        else:
+            raise ValueError(f"unknown side {side}")
+        amp = F.softplus(self.base_amp_logits[token] + amp_delta) + 1e-6
+        phase = self.base_phase[token] + phase_delta
+        real = amp * torch.cos(phase)
+        imag = amp * torch.sin(phase)
+        scale = torch.sqrt((real.square() + imag.square()).sum(dim=-1, keepdim=True).clamp_min(1e-8))
+        return real / scale, imag / scale
+
+    def forward(self, left: torch.Tensor, rel: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
+        left_real, left_imag = self.token_state(left, "left")
+        right_real, right_imag = self.token_state(right, "right")
+        return phase_overlap_logits(
+            left_real,
+            left_imag,
+            right_real,
+            right_imag,
+            self.rel_phase(rel),
+            self.logit_scale,
+            self.logit_bias,
+        )
 
 
 class FrozenAmplitudeModel(nn.Module):
@@ -400,6 +592,10 @@ def train_one(
         model = TokenPhaseModel(token_real, token_imag, relations)
     elif model_name == "token_phase_lowrank":
         model = TokenPhaseLowRankModel(token_real, token_imag, relations, phase_rank)
+    elif model_name == "token_complex":
+        model = TokenComplexModel(token_real, token_imag, relations)
+    elif model_name == "token_complex_role":
+        model = TokenComplexRoleModel(token_real, token_imag, relations)
     elif model_name == "real_diag":
         model = RealDiagModel(token_real.shape[0], dim, relations)
     else:
@@ -468,10 +664,14 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=1024)
     parser.add_argument("--learning-rate", type=float, default=3e-3)
     parser.add_argument("--seed", type=int, default=23)
+    parser.add_argument("--cache", type=str, default=None)
     parser.add_argument(
         "--models",
         type=str,
-        default="frozen_phase,frozen_amplitude,token_phase,token_phase_lowrank,real_diag",
+        default=(
+            "frozen_phase,frozen_amplitude,token_phase,token_phase_lowrank,"
+            "token_complex,token_complex_role,real_diag"
+        ),
     )
     parser.add_argument("--out", type=str, default="runs/tinystories_pair_probe.csv")
     args = parser.parse_args()
@@ -491,9 +691,18 @@ def main() -> None:
     batch_size = int(config.get("batch_size", args.batch_size))
     learning_rate = float(config.get("learning_rate", args.learning_rate))
     seed = int(config.get("seed", args.seed))
+    cache_path = config.get("cache", args.cache)
     models_raw = config.get("models", args.models)
     models = models_raw if isinstance(models_raw, list) else [item.strip() for item in models_raw.split(",")]
-    known_models = {"frozen_phase", "frozen_amplitude", "token_phase", "token_phase_lowrank", "real_diag"}
+    known_models = {
+        "frozen_phase",
+        "frozen_amplitude",
+        "token_phase",
+        "token_phase_lowrank",
+        "token_complex",
+        "token_complex_role",
+        "real_diag",
+    }
     unknown_models = sorted(set(models) - known_models)
     if unknown_models:
         raise SystemExit(f"unknown model(s): {', '.join(unknown_models)}")
@@ -505,16 +714,12 @@ def main() -> None:
     print(f"dataset={dataset_name} split={split} device={device}")
     print(f"models={','.join(models)}")
     print(f"dim={dim} phase_rank={phase_rank} window={window} epochs={epochs} batch_size={batch_size}")
-    print("building vocabulary...")
-    vocab_list = build_vocab(dataset_name, split, vocab_size, vocab_stories)
-    vocab = {token: idx for idx, token in enumerate(vocab_list)}
-    print(f"vocab_size={len(vocab_list)}")
-
-    print("building examples...")
-    train_cpu, test_cpu = build_examples(
+    vocab_list, train_cpu, test_cpu = load_or_build_cached_data(
+        cache_path=cache_path,
         dataset_name=dataset_name,
         split=split,
-        vocab=vocab,
+        vocab_size=vocab_size,
+        vocab_stories=vocab_stories,
         window=window,
         max_train_examples=max_train_examples,
         test_examples=test_examples,

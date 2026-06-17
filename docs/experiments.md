@@ -127,6 +127,8 @@ python3 experiments/tinystories_pair_probe.py --config configs/macbook_tinystori
 python3 experiments/summarize_phase_results.py runs/tinystories_pair_probe.csv
 ```
 
+The configs cache generated vocabulary and train/test tensors under `runs/cache/`. The first run still streams and builds examples; later runs reuse the cached `.pt` file as long as dataset-building metadata matches.
+
 Run on DGX:
 
 ```bash
@@ -140,6 +142,8 @@ This probe compares:
 - `frozen_amplitude`: same fixed feature amplitudes with phase removed.
 - `token_phase`: fixed feature-prepared amplitudes and base phases, plus learned per-token phase residuals and relation phases.
 - `token_phase_lowrank`: lower-parameter phase residuals factorized through a small rank.
+- `token_complex`: learned per-token amplitude and phase residuals, with normalized complex states.
+- `token_complex_role`: separate left/right amplitude and phase residuals for asymmetric word-role behavior.
 - `real_diag`: learned real token embeddings and relation diagonals.
 
-The important first question is whether frozen phase features beat frozen amplitude features. If they do not, compare `token_phase` / `token_phase_lowrank` against `real_diag`: this asks whether a quantum-native state parameterization can learn natural lexical structure with fewer parameters than unconstrained real token embeddings.
+The important first question is whether frozen phase features beat frozen amplitude features. If they do not, compare `token_complex` / `token_complex_role` against `real_diag`: this asks whether a quantum-native normalized complex state parameterization can learn natural lexical structure competitively with unconstrained real token embeddings.
