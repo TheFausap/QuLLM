@@ -12,6 +12,7 @@ and compares:
     token_complex_role: separate left/right amplitude and phase residuals
     token_complex_signed: signed complex inner-product readout
     token_complex_role_signed: role-specific signed complex readout
+    complex_diag:     unconstrained complex bilinear diagnostic baseline
     real_diag:        learned real token embeddings + relation diagonal
 
 The task is binary: distinguish true local word pairs from random negatives.
@@ -606,6 +607,45 @@ class RealDiagModel(nn.Module):
         return self.logit_scale * score + self.logit_bias
 
 
+class ComplexDiagModel(nn.Module):
+    def __init__(self, vocab_size: int, dim: int, relations: int) -> None:
+        super().__init__()
+        self.left_real = nn.Embedding(vocab_size, dim)
+        self.left_imag = nn.Embedding(vocab_size, dim)
+        self.right_real = nn.Embedding(vocab_size, dim)
+        self.right_imag = nn.Embedding(vocab_size, dim)
+        self.rel_real = nn.Embedding(relations, dim)
+        self.rel_imag = nn.Embedding(relations, dim)
+        self.real_weight = nn.Parameter(torch.tensor(1.0))
+        self.imag_weight = nn.Parameter(torch.tensor(0.0))
+        self.logit_scale = nn.Parameter(torch.tensor(1.0))
+        self.logit_bias = nn.Parameter(torch.tensor(0.0))
+        for table in (
+            self.left_real,
+            self.left_imag,
+            self.right_real,
+            self.right_imag,
+            self.rel_real,
+            self.rel_imag,
+        ):
+            nn.init.normal_(table.weight, std=(2 * dim) ** -0.5)
+
+    def forward(self, left: torch.Tensor, rel: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
+        left_real = self.left_real(left)
+        left_imag = self.left_imag(left)
+        right_real = self.right_real(right)
+        right_imag = self.right_imag(right)
+        rel_real = self.rel_real(rel)
+        rel_imag = self.rel_imag(rel)
+
+        rotated_real = rel_real * right_real - rel_imag * right_imag
+        rotated_imag = rel_real * right_imag + rel_imag * right_real
+        inner_real = (left_real * rotated_real + left_imag * rotated_imag).sum(dim=-1)
+        inner_imag = (left_real * rotated_imag - left_imag * rotated_real).sum(dim=-1)
+        score = self.real_weight * inner_real + self.imag_weight * inner_imag
+        return self.logit_scale * score + self.logit_bias
+
+
 def move_dataset(
     dataset: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
     device: torch.device,
@@ -667,6 +707,8 @@ def train_one(
         model = TokenComplexSignedModel(token_real, token_imag, relations)
     elif model_name == "token_complex_role_signed":
         model = TokenComplexRoleSignedModel(token_real, token_imag, relations)
+    elif model_name == "complex_diag":
+        model = ComplexDiagModel(token_real.shape[0], dim, relations)
     elif model_name == "real_diag":
         model = RealDiagModel(token_real.shape[0], dim, relations)
     else:
@@ -742,7 +784,7 @@ def main() -> None:
         default=(
             "frozen_phase,frozen_amplitude,token_phase,token_phase_lowrank,"
             "token_complex,token_complex_role,token_complex_signed,"
-            "token_complex_role_signed,real_diag"
+            "token_complex_role_signed,complex_diag,real_diag"
         ),
     )
     parser.add_argument("--out", type=str, default="runs/tinystories_pair_probe.csv")
@@ -775,6 +817,7 @@ def main() -> None:
         "token_complex_role",
         "token_complex_signed",
         "token_complex_role_signed",
+        "complex_diag",
         "real_diag",
     }
     unknown_models = sorted(set(models) - known_models)

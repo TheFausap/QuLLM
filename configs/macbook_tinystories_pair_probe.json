@@ -23,6 +23,7 @@
     "token_complex_role",
     "token_complex_signed",
     "token_complex_role_signed",
+    "complex_diag",
     "real_diag"
   ]
 }
