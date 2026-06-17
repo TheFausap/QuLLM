@@ -203,3 +203,10 @@ Extended depth sweep around the 16-layer collapse:
 python3 experiments/tinystories_attention_probe.py --config configs/dgx_tinystories_attention_depth_extended.json --device cuda
 python3 experiments/summarize_phase_results.py runs/tinystories_attention_depth_extended.csv
 ```
+
+Phase-floor variant sweep:
+
+```bash
+python3 experiments/tinystories_attention_probe.py --config configs/dgx_tinystories_attention_floor_sweep.json --device cuda
+python3 experiments/summarize_phase_results.py runs/tinystories_attention_floor_sweep.csv
+```

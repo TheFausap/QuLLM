@@ -398,13 +398,17 @@ class RealAttentionStackedProbe(nn.Module):
 
 
 class ComplexAttentionLayer(nn.Module):
-    def __init__(self, dim: int) -> None:
+    def __init__(self, dim: int, phase_init: float = 0.0, min_mix: float = 0.0) -> None:
         super().__init__()
         self.q_phase = nn.Parameter(torch.zeros(dim))
         self.k_phase = nn.Parameter(torch.zeros(dim))
         self.v_phase = nn.Parameter(torch.zeros(dim))
         self.out_phase = nn.Parameter(torch.zeros(dim))
         self.mix = nn.Parameter(torch.tensor(-2.0))
+        self.min_mix = min_mix
+        if phase_init > 0:
+            for phase in (self.q_phase, self.k_phase, self.v_phase, self.out_phase):
+                nn.init.normal_(phase, std=phase_init)
 
     @staticmethod
     def rotate(real: torch.Tensor, imag: torch.Tensor, phase: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -434,19 +438,27 @@ class ComplexAttentionLayer(nn.Module):
         pooled_real = (attn.unsqueeze(-1) * v_real).sum(dim=1)
         pooled_imag = (attn.unsqueeze(-1) * v_imag).sum(dim=1)
         pooled_real, pooled_imag = self.rotate(pooled_real, pooled_imag, self.out_phase)
-        mix = torch.sigmoid(self.mix)
+        mix = self.min_mix + (1.0 - self.min_mix) * torch.sigmoid(self.mix)
         next_real = candidate_real + mix * pooled_real
         next_imag = candidate_imag + mix * pooled_imag
         return self.normalize(next_real, next_imag)
 
 
 class ComplexAttentionStackedProbe(nn.Module):
-    def __init__(self, vocab_size: int, dim: int, context: int, layers: int = 2) -> None:
+    def __init__(
+        self,
+        vocab_size: int,
+        dim: int,
+        context: int,
+        layers: int = 2,
+        phase_init: float = 0.0,
+        min_mix: float = 0.0,
+    ) -> None:
         super().__init__()
         self.real = nn.Embedding(vocab_size, dim)
         self.imag = nn.Embedding(vocab_size, dim)
         self.pos_phase = nn.Embedding(context, dim)
-        self.layers = nn.ModuleList(ComplexAttentionLayer(dim) for _ in range(layers))
+        self.layers = nn.ModuleList(ComplexAttentionLayer(dim, phase_init=phase_init, min_mix=min_mix) for _ in range(layers))
         self.readout_phase = nn.Parameter(torch.zeros(dim))
         self.real_weight = nn.Parameter(torch.tensor(1.0))
         self.imag_weight = nn.Parameter(torch.tensor(0.0))
@@ -484,6 +496,11 @@ class ComplexAttentionStackedProbe(nn.Module):
         return self.logit_scale * score + self.logit_bias
 
 
+class ComplexAttentionStackedFloorProbe(ComplexAttentionStackedProbe):
+    def __init__(self, vocab_size: int, dim: int, context: int, layers: int = 2) -> None:
+        super().__init__(vocab_size, dim, context, layers, phase_init=0.05, min_mix=0.2)
+
+
 MODEL_TYPES = {
     "real_attention": RealAttentionProbe,
     "complex_attention": ComplexAttentionProbe,
@@ -493,6 +510,7 @@ MODEL_TYPES = {
     "complex_attention_halfdim": ComplexAttentionHalfDimProbe,
     "real_attention_stacked": RealAttentionStackedProbe,
     "complex_attention_stacked": ComplexAttentionStackedProbe,
+    "complex_attention_stacked_floor": ComplexAttentionStackedFloorProbe,
 }
 
 
