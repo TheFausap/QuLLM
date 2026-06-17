@@ -222,7 +222,10 @@ class PhaseMarginModel(PhaseFeatureModel):
     def __init__(self, space: StructuredPhaseSpace) -> None:
         super().__init__(space)
         step = math.tau / space.phase_classes
-        self.register_buffer("phase_threshold", torch.tensor(math.cos(step / 2)))
+        # In cosine-score space the nearest wrong phase has score cos(step),
+        # so the natural binary decision boundary is the midpoint between the
+        # correct score 1.0 and that nearest wrong score.
+        self.register_buffer("phase_threshold", torch.tensor((1.0 + math.cos(step)) / 2.0))
         self.logit_scale = nn.Parameter(torch.tensor(12.0))
         self.group_penalty = nn.Parameter(torch.tensor(12.0))
 

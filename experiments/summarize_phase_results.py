@@ -38,7 +38,12 @@ def main() -> None:
             params = row.get("trainable_params", "")
             param_text = f" params={params}" if params else ""
             phase_mean_error = row.get("phase_mean_error", "")
-            phase_text = f" phase_mean_err={float(phase_mean_error):.3f}" if phase_mean_error else ""
+            phase_max_error = row.get("phase_max_error", "")
+            phase_text = ""
+            if phase_mean_error:
+                phase_text = f" phase_mean_err={float(phase_mean_error):.3f}"
+                if phase_max_error:
+                    phase_text += f" phase_max_err={float(phase_max_error):.3f}"
             print(f"  {model:18s} accuracy={accuracy:.4f}{gap}{param_text}{phase_text}")
         print()
 
