@@ -13,5 +13,12 @@
   "learning_rate": 0.002,
   "seed": 31,
   "cache": "runs/cache/tinystories_dgx_attention.pt",
-  "models": ["real_attention", "complex_attention_halfdim", "complex_attention", "real_attention_wide"]
+  "models": [
+    "real_attention",
+    "complex_attention_halfdim",
+    "complex_attention_nophase",
+    "complex_attention_born",
+    "complex_attention",
+    "real_attention_wide"
+  ]
 }

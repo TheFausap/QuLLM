@@ -303,6 +303,48 @@ class ComplexAttentionProbe(nn.Module):
         return self.logit_scale * score + self.logit_bias
 
 
+class ComplexAttentionNoPhaseProbe(ComplexAttentionProbe):
+    """Complex attention ablation with trainable phase rotations disabled."""
+
+    def __init__(self, vocab_size: int, dim: int, context: int) -> None:
+        super().__init__(vocab_size, dim, context)
+        self.pos_phase.weight.requires_grad_(False)
+        self.q_phase.requires_grad_(False)
+        self.k_phase.requires_grad_(False)
+        self.v_phase.requires_grad_(False)
+        self.out_phase.requires_grad_(False)
+
+
+class ComplexAttentionBornProbe(ComplexAttentionProbe):
+    """Complex attention that uses Born-style squared compatibility/readout."""
+
+    def forward(self, context_ids: torch.Tensor, candidate: torch.Tensor) -> torch.Tensor:
+        positions = torch.arange(context_ids.shape[1], device=context_ids.device)
+        ctx_real = self.real(context_ids)
+        ctx_imag = self.imag(context_ids)
+        ctx_real, ctx_imag = self.rotate(ctx_real, ctx_imag, self.pos_phase(positions))
+        cand_real = self.real(candidate)
+        cand_imag = self.imag(candidate)
+
+        q_real, q_imag = self.rotate(cand_real, cand_imag, self.q_phase)
+        k_real, k_imag = self.rotate(ctx_real, ctx_imag, self.k_phase)
+        v_real, v_imag = self.rotate(ctx_real, ctx_imag, self.v_phase)
+        q_real, q_imag = self.normalize(q_real, q_imag)
+        k_real, k_imag = self.normalize(k_real, k_imag)
+
+        compat_real = (q_real.unsqueeze(1) * k_real + q_imag.unsqueeze(1) * k_imag).sum(dim=-1)
+        compat_imag = (q_real.unsqueeze(1) * k_imag - q_imag.unsqueeze(1) * k_real).sum(dim=-1)
+        attn = torch.softmax((compat_real.square() + compat_imag.square()) * math.sqrt(k_real.shape[-1]), dim=-1)
+        pooled_real = (attn.unsqueeze(-1) * v_real).sum(dim=1)
+        pooled_imag = (attn.unsqueeze(-1) * v_imag).sum(dim=1)
+        pooled_real, pooled_imag = self.rotate(pooled_real, pooled_imag, self.out_phase)
+
+        inner_real = (pooled_real * cand_real + pooled_imag * cand_imag).sum(dim=-1)
+        inner_imag = (pooled_real * cand_imag - pooled_imag * cand_real).sum(dim=-1)
+        score = (inner_real.square() + inner_imag.square()) / math.sqrt(k_real.shape[-1])
+        return self.logit_scale * score + self.logit_bias
+
+
 class RealAttentionWideProbe(RealAttentionProbe):
     def __init__(self, vocab_size: int, dim: int, context: int) -> None:
         super().__init__(vocab_size, dim * 2, context)
@@ -316,6 +358,8 @@ class ComplexAttentionHalfDimProbe(ComplexAttentionProbe):
 MODEL_TYPES = {
     "real_attention": RealAttentionProbe,
     "complex_attention": ComplexAttentionProbe,
+    "complex_attention_nophase": ComplexAttentionNoPhaseProbe,
+    "complex_attention_born": ComplexAttentionBornProbe,
     "real_attention_wide": RealAttentionWideProbe,
     "complex_attention_halfdim": ComplexAttentionHalfDimProbe,
 }

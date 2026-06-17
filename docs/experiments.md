@@ -168,6 +168,8 @@ Models:
 - `real_attention`: real candidate-to-context attention.
 - `complex_attention`: complex candidate-to-context attention with phase rotations and signed complex readout.
 - `complex_attention_halfdim`: roughly parameter-matched to `real_attention`.
+- `complex_attention_nophase`: disables trainable phase rotations to test whether phase dynamics matter.
+- `complex_attention_born`: uses Born-style squared compatibility/readout to compare against signed complex readout.
 - `real_attention_wide`: roughly parameter-matched to `complex_attention`.
 
 Run on DGX:
