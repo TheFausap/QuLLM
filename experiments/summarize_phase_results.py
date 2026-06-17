@@ -44,7 +44,16 @@ def main() -> None:
                 phase_text = f" phase_mean_err={float(phase_mean_error):.3f}"
                 if phase_max_error:
                     phase_text += f" phase_max_err={float(phase_max_error):.3f}"
-            print(f"  {model:18s} accuracy={accuracy:.4f}{gap}{param_text}{phase_text}")
+            phase_rule_accuracy = row.get("phase_rule_accuracy", "")
+            rule_text = f" phase_rule_acc={float(phase_rule_accuracy):.4f}" if phase_rule_accuracy else ""
+            breakdown = ""
+            if row.get("positive_accuracy", ""):
+                breakdown = (
+                    f" pos={float(row['positive_accuracy']):.4f}"
+                    f" same_neg={float(row['same_group_negative_accuracy']):.4f}"
+                    f" diff_neg={float(row['diff_group_negative_accuracy']):.4f}"
+                )
+            print(f"  {model:18s} accuracy={accuracy:.4f}{gap}{param_text}{phase_text}{rule_text}{breakdown}")
         print()
 
 

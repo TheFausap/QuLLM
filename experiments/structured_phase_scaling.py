@@ -236,6 +236,25 @@ class PhaseMarginModel(PhaseFeatureModel):
         return phase_logit - (1.0 - same_group) * F.softplus(self.group_penalty) + self.logit_bias
 
 
+class PhaseMarginFixedModel(PhaseFeatureModel):
+    """Phase-margin model with fixed measurement scale and no learned bias."""
+
+    def __init__(self, space: StructuredPhaseSpace) -> None:
+        super().__init__(space)
+        step = math.tau / space.phase_classes
+        self.register_buffer("phase_threshold", torch.tensor((1.0 + math.cos(step)) / 2.0))
+        self.register_buffer("fixed_scale", torch.tensor(32.0))
+        self.register_buffer("fixed_group_penalty", torch.tensor(32.0))
+        self.logit_scale.requires_grad_(False)
+        self.logit_bias.requires_grad_(False)
+
+    def forward(self, left: torch.Tensor, rel: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
+        same_group = (self.space.group_of(left) == self.space.group_of(right)).float()
+        delta = self.space.phase_angle_of(right) + self.relation_phase(rel) - self.space.phase_angle_of(left)
+        phase_logit = self.fixed_scale * (torch.cos(delta) - self.phase_threshold)
+        return phase_logit - (1.0 - same_group) * self.fixed_group_penalty
+
+
 class NoRelationPhaseModel(PhaseFeatureModel):
     def __init__(self, space: StructuredPhaseSpace) -> None:
         super().__init__(space)
@@ -291,6 +310,7 @@ class RealFeatureMLP(nn.Module):
 MODEL_TYPES = {
     "phase_feature": PhaseFeatureModel,
     "phase_margin": PhaseMarginModel,
+    "phase_margin_fixed": PhaseMarginFixedModel,
     "no_relation_phase": NoRelationPhaseModel,
     "amplitude_feature": AmplitudeFeatureModel,
     "real_feature_mlp": RealFeatureMLP,
@@ -314,6 +334,23 @@ def relation_phase_error(model: nn.Module, space: StructuredPhaseSpace) -> tuple
 
 
 @torch.no_grad()
+def deterministic_phase_rule_accuracy(
+    model: nn.Module,
+    space: StructuredPhaseSpace,
+    dataset: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+) -> float | None:
+    if not hasattr(model, "rel_phase") or not hasattr(model, "phase_threshold"):
+        return None
+
+    left, rel, right, labels = dataset
+    same_group = space.group_of(left) == space.group_of(right)
+    learned_phase = model.rel_phase(rel).squeeze(-1)
+    delta = space.phase_angle_of(right) + learned_phase - space.phase_angle_of(left)
+    predictions = same_group & (torch.cos(delta) > model.phase_threshold)
+    return float((predictions == labels.bool()).float().mean().item())
+
+
+@torch.no_grad()
 def evaluate(
     model: nn.Module,
     dataset: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
@@ -333,6 +370,32 @@ def evaluate(
         correct += ((torch.sigmoid(logits) >= 0.5) == labels[batch].bool()).sum().item()
 
     return {"loss": loss_sum / total, "accuracy": correct / total}
+
+
+@torch.no_grad()
+def evaluate_breakdown(
+    model: nn.Module,
+    space: StructuredPhaseSpace,
+    dataset: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+) -> dict[str, float]:
+    model.eval()
+    left, rel, right, labels = dataset
+    predictions = torch.sigmoid(model(left, rel, right)) >= 0.5
+    same_group = space.group_of(left) == space.group_of(right)
+    positive = labels.bool()
+    same_group_negative = (~positive) & same_group
+    diff_group_negative = (~positive) & (~same_group)
+
+    def masked_accuracy(mask: torch.Tensor) -> float:
+        if not bool(mask.any().item()):
+            return float("nan")
+        return float((predictions[mask] == labels[mask].bool()).float().mean().item())
+
+    return {
+        "positive_accuracy": masked_accuracy(positive),
+        "same_group_negative_accuracy": masked_accuracy(same_group_negative),
+        "diff_group_negative_accuracy": masked_accuracy(diff_group_negative),
+    }
 
 
 def train_one(
@@ -367,7 +430,9 @@ def train_one(
             optimizer.step()
 
     metrics = evaluate(model, test_data, batch_size)
+    metrics.update(evaluate_breakdown(model, space, test_data))
     phase_mean_error, phase_max_error = relation_phase_error(model, space)
+    phase_rule_accuracy = deterministic_phase_rule_accuracy(model, space, test_data)
     metrics.update(
         {
             "model": model_name,
@@ -376,6 +441,7 @@ def train_one(
             "trainable_params": trainable_params,
             "phase_mean_error": phase_mean_error,
             "phase_max_error": phase_max_error,
+            "phase_rule_accuracy": phase_rule_accuracy,
         }
     )
     return metrics
@@ -392,6 +458,10 @@ def write_results(path: Path, rows: list[dict[str, Any]]) -> None:
         "trainable_params",
         "phase_mean_error",
         "phase_max_error",
+        "phase_rule_accuracy",
+        "positive_accuracy",
+        "same_group_negative_accuracy",
+        "diff_group_negative_accuracy",
     ]
     with open(path, "w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
@@ -479,10 +549,13 @@ def main() -> None:
                     f" phase_mean_err={row['phase_mean_error']:.3f}"
                     f" phase_max_err={row['phase_max_error']:.3f}"
                 )
+            rule_diag = ""
+            if row.get("phase_rule_accuracy") is not None:
+                rule_diag = f" phase_rule_acc={row['phase_rule_accuracy']:.4f}"
             print(
                 f"  {model_name:18s} "
                 f"acc={row['accuracy']:.4f} loss={row['loss']:.4f} "
-                f"params={row['trainable_params']} seconds={row['seconds']}{phase_diag}"
+                f"params={row['trainable_params']} seconds={row['seconds']}{phase_diag}{rule_diag}"
             )
 
     out = ROOT / args.out

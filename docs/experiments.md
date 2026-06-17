@@ -104,3 +104,5 @@ Expected pattern:
 - `real_feature_mlp` is a strong classical feature baseline. If it ties the phase model, the signal is not uniquely quantum-like; compare data efficiency and parameter count.
 
 The CSV includes `trainable_params` and, for phase-relation models, `phase_mean_error` / `phase_max_error` in radians against the synthetic teacher's relation phase shifts. Use those diagnostics to distinguish optimization failure from representational limits.
+
+For phase-margin models, the CSV also includes `phase_rule_accuracy`, which applies the learned relation phases with a fixed deterministic threshold and ignores learned scale/bias calibration. If `phase_rule_accuracy` is higher than normal accuracy, the phase representation is correct and the readout calibration is the remaining failure mode.
