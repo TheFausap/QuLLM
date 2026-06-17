@@ -98,6 +98,7 @@ python3 experiments/summarize_phase_results.py runs/structured_phase_scaling.csv
 Expected pattern:
 
 - `phase_feature` should learn quickly because the correct hypothesis is a tiny set of relation phase shifts.
+- `phase_margin` uses the same phase hypothesis with a sharper discrete-class measurement threshold.
 - `no_relation_phase` should fail on relation-dependent cases.
 - `amplitude_feature` should detect same-group pairs but fail on wrong-phase same-group negatives.
 - `real_feature_mlp` is a strong classical feature baseline. If it ties the phase model, the signal is not uniquely quantum-like; compare data efficiency and parameter count.

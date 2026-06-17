@@ -24,12 +24,16 @@ def main() -> None:
     print()
     for train_size in sorted(rows_by_size):
         results = rows_by_size[train_size]
-        phase = results.get("phase_unitary")
+        reference_name = next(
+            (name for name in ("phase_unitary", "phase_margin", "phase_feature") if name in results),
+            None,
+        )
+        reference = results.get(reference_name) if reference_name else None
         print(f"train_size={train_size}")
         for model, accuracy in sorted(results.items(), key=lambda item: item[0]):
             gap = ""
-            if phase is not None and model != "phase_unitary":
-                gap = f"  phase_gap={phase - accuracy:+.4f}"
+            if reference is not None and model != reference_name:
+                gap = f"  {reference_name}_gap={reference - accuracy:+.4f}"
             print(f"  {model:16s} accuracy={accuracy:.4f}{gap}")
         print()
 

@@ -210,6 +210,29 @@ class PhaseFeatureModel(nn.Module):
         return self.logit_scale * (score - 0.5) + self.logit_bias
 
 
+class PhaseMarginModel(PhaseFeatureModel):
+    """Sharper relation phase readout for discrete phase classes.
+
+    PhaseFeatureModel uses a smooth Born-style cosine score. That is a useful
+    probe, but with many phase classes the nearest wrong class can sit very near
+    the positive class. This model keeps the same learned relation phase shift
+    while making the measurement threshold explicit.
+    """
+
+    def __init__(self, space: StructuredPhaseSpace) -> None:
+        super().__init__(space)
+        step = math.tau / space.phase_classes
+        self.register_buffer("phase_threshold", torch.tensor(math.cos(step / 2)))
+        self.logit_scale = nn.Parameter(torch.tensor(12.0))
+        self.group_penalty = nn.Parameter(torch.tensor(12.0))
+
+    def forward(self, left: torch.Tensor, rel: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
+        same_group = (self.space.group_of(left) == self.space.group_of(right)).float()
+        delta = self.space.phase_angle_of(right) + self.relation_phase(rel) - self.space.phase_angle_of(left)
+        phase_logit = self.logit_scale * (torch.cos(delta) - self.phase_threshold)
+        return phase_logit - (1.0 - same_group) * F.softplus(self.group_penalty) + self.logit_bias
+
+
 class NoRelationPhaseModel(PhaseFeatureModel):
     def __init__(self, space: StructuredPhaseSpace) -> None:
         super().__init__(space)
@@ -264,6 +287,7 @@ class RealFeatureMLP(nn.Module):
 
 MODEL_TYPES = {
     "phase_feature": PhaseFeatureModel,
+    "phase_margin": PhaseMarginModel,
     "no_relation_phase": NoRelationPhaseModel,
     "amplitude_feature": AmplitudeFeatureModel,
     "real_feature_mlp": RealFeatureMLP,
@@ -351,7 +375,11 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=1024)
     parser.add_argument("--learning-rate", type=float, default=1e-2)
     parser.add_argument("--seed", type=int, default=11)
-    parser.add_argument("--models", type=str, default="phase_feature,no_relation_phase,amplitude_feature,real_feature_mlp")
+    parser.add_argument(
+        "--models",
+        type=str,
+        default="phase_feature,phase_margin,no_relation_phase,amplitude_feature,real_feature_mlp",
+    )
     parser.add_argument("--out", type=str, default="runs/structured_phase_scaling.csv")
     args = parser.parse_args()
 

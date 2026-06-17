@@ -9,5 +9,5 @@
   "batch_size": 16384,
   "learning_rate": 0.01,
   "seed": 11,
-  "models": ["phase_feature", "no_relation_phase", "amplitude_feature", "real_feature_mlp"]
+  "models": ["phase_feature", "phase_margin", "no_relation_phase", "amplitude_feature", "real_feature_mlp"]
 }
