@@ -196,3 +196,10 @@ Focused powers-of-two depth sweep at 4M examples:
 python3 experiments/tinystories_attention_probe.py --config configs/dgx_tinystories_attention_depth_powers.json --device cuda
 python3 experiments/summarize_phase_results.py runs/tinystories_attention_depth_powers.csv
 ```
+
+Extended depth sweep around the 16-layer collapse:
+
+```bash
+python3 experiments/tinystories_attention_probe.py --config configs/dgx_tinystories_attention_depth_extended.json --device cuda
+python3 experiments/summarize_phase_results.py runs/tinystories_attention_depth_extended.csv
+```

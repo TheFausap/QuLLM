@@ -80,6 +80,10 @@ def main() -> None:
                 value = maybe_float(row.get(label, ""))
                 if value is not None:
                     diagnostics += f" {label}={value:.3f}"
+            for label in ("mix_by_layer", "phase_abs_by_layer", "phase_abs_max_by_layer", "gate_by_layer"):
+                value = row.get(label, "")
+                if value:
+                    diagnostics += f" {label}=[{value}]"
             print(
                 f"  {model:26s} accuracy={accuracy:.4f}"
                 f"{gap}{param_text}{phase_text}{rule_text}{breakdown}{diagnostics}"

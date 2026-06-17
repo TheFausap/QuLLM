@@ -519,32 +519,45 @@ def trainable_parameter_count(model: nn.Module) -> int:
     return sum(param.numel() for param in model.parameters() if param.requires_grad)
 
 
+def _format_trace(values: list[float]) -> str:
+    return ";".join(f"{value:.3f}" for value in values)
+
+
 @torch.no_grad()
-def model_diagnostics(model: nn.Module) -> dict[str, float]:
-    diagnostics: dict[str, float] = {}
+def model_diagnostics(model: nn.Module) -> dict[str, float | str]:
+    diagnostics: dict[str, float | str] = {}
     if isinstance(model, ComplexAttentionStackedProbe):
         mix_values = torch.stack([torch.sigmoid(layer.mix.detach()) for layer in model.layers])
+        phase_layer_means: list[float] = []
+        phase_layer_maxes: list[float] = []
         phase_tensors = []
         for layer in model.layers:
-            phase_tensors.extend(
+            layer_phases = torch.cat(
                 [
-                    layer.q_phase.detach(),
-                    layer.k_phase.detach(),
-                    layer.v_phase.detach(),
-                    layer.out_phase.detach(),
+                    layer.q_phase.detach().flatten(),
+                    layer.k_phase.detach().flatten(),
+                    layer.v_phase.detach().flatten(),
+                    layer.out_phase.detach().flatten(),
                 ]
             )
+            phase_layer_means.append(float(layer_phases.abs().mean().item()))
+            phase_layer_maxes.append(float(layer_phases.abs().max().item()))
+            phase_tensors.append(layer_phases)
         phases = torch.cat([tensor.flatten() for tensor in phase_tensors])
         diagnostics["mix_mean"] = float(mix_values.mean().item())
         diagnostics["mix_min"] = float(mix_values.min().item())
         diagnostics["mix_max"] = float(mix_values.max().item())
         diagnostics["phase_abs_mean"] = float(phases.abs().mean().item())
         diagnostics["phase_abs_max"] = float(phases.abs().max().item())
+        diagnostics["mix_by_layer"] = _format_trace([float(value.item()) for value in mix_values])
+        diagnostics["phase_abs_by_layer"] = _format_trace(phase_layer_means)
+        diagnostics["phase_abs_max_by_layer"] = _format_trace(phase_layer_maxes)
     if isinstance(model, RealAttentionStackedProbe):
         gate_values = torch.stack([torch.sigmoid(layer.gate.detach()) for layer in model.layers])
         diagnostics["gate_mean"] = float(gate_values.mean().item())
         diagnostics["gate_min"] = float(gate_values.min().item())
         diagnostics["gate_max"] = float(gate_values.max().item())
+        diagnostics["gate_by_layer"] = _format_trace([float(value.item()) for value in gate_values])
     return diagnostics
 
 
@@ -613,9 +626,13 @@ def write_results(path: Path, rows: list[dict[str, Any]]) -> None:
         "mix_max",
         "phase_abs_mean",
         "phase_abs_max",
+        "mix_by_layer",
+        "phase_abs_by_layer",
+        "phase_abs_max_by_layer",
         "gate_mean",
         "gate_min",
         "gate_max",
+        "gate_by_layer",
     ]
     with open(path, "w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
