@@ -147,6 +147,8 @@ This probe compares:
 - `token_complex_signed`: normalized complex states with a signed complex inner-product readout instead of Born probability.
 - `token_complex_role_signed`: role-specific signed complex readout.
 - `complex_diag`: unconstrained complex bilinear diagnostic baseline. This is less quantum-native, but tests whether complex-valued bilinear geometry can match the real baseline before adding unitary constraints back.
+- `complex_diag_halfdim`: roughly parameter-matched to `real_diag`.
 - `real_diag`: learned real token embeddings and relation diagonals.
+- `real_diag_wide`: roughly parameter-matched to `complex_diag`.
 
 The important first question is whether frozen phase features beat frozen amplitude features. If they do not, compare `token_complex_signed` / `token_complex_role_signed` against `real_diag`: this asks whether a quantum-native normalized complex state parameterization can learn natural lexical structure once the readout preserves signed phase information.

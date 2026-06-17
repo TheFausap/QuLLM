@@ -13,7 +13,9 @@ and compares:
     token_complex_signed: signed complex inner-product readout
     token_complex_role_signed: role-specific signed complex readout
     complex_diag:     unconstrained complex bilinear diagnostic baseline
+    complex_diag_halfdim: complex baseline with half dimension, roughly real_diag-sized
     real_diag:        learned real token embeddings + relation diagonal
+    real_diag_wide:   real baseline with doubled dimension, roughly complex_diag-sized
 
 The task is binary: distinguish true local word pairs from random negatives.
 Relations are signed relative-position buckets, such as -3, -2, -1, +1, +2, +3.
@@ -646,6 +648,16 @@ class ComplexDiagModel(nn.Module):
         return self.logit_scale * score + self.logit_bias
 
 
+class RealDiagWideModel(RealDiagModel):
+    def __init__(self, vocab_size: int, dim: int, relations: int) -> None:
+        super().__init__(vocab_size, dim * 2, relations)
+
+
+class ComplexDiagHalfDimModel(ComplexDiagModel):
+    def __init__(self, vocab_size: int, dim: int, relations: int) -> None:
+        super().__init__(vocab_size, max(1, dim // 2), relations)
+
+
 def move_dataset(
     dataset: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
     device: torch.device,
@@ -709,8 +721,12 @@ def train_one(
         model = TokenComplexRoleSignedModel(token_real, token_imag, relations)
     elif model_name == "complex_diag":
         model = ComplexDiagModel(token_real.shape[0], dim, relations)
+    elif model_name == "complex_diag_halfdim":
+        model = ComplexDiagHalfDimModel(token_real.shape[0], dim, relations)
     elif model_name == "real_diag":
         model = RealDiagModel(token_real.shape[0], dim, relations)
+    elif model_name == "real_diag_wide":
+        model = RealDiagWideModel(token_real.shape[0], dim, relations)
     else:
         raise ValueError(f"unknown model {model_name}")
 
@@ -784,7 +800,8 @@ def main() -> None:
         default=(
             "frozen_phase,frozen_amplitude,token_phase,token_phase_lowrank,"
             "token_complex,token_complex_role,token_complex_signed,"
-            "token_complex_role_signed,complex_diag,real_diag"
+            "token_complex_role_signed,complex_diag_halfdim,complex_diag,"
+            "real_diag,real_diag_wide"
         ),
     )
     parser.add_argument("--out", type=str, default="runs/tinystories_pair_probe.csv")
@@ -817,8 +834,10 @@ def main() -> None:
         "token_complex_role",
         "token_complex_signed",
         "token_complex_role_signed",
+        "complex_diag_halfdim",
         "complex_diag",
         "real_diag",
+        "real_diag_wide",
     }
     unknown_models = sorted(set(models) - known_models)
     if unknown_models:

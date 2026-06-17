@@ -23,7 +23,9 @@
     "token_complex_role",
     "token_complex_signed",
     "token_complex_role_signed",
+    "complex_diag_halfdim",
     "complex_diag",
-    "real_diag"
+    "real_diag",
+    "real_diag_wide"
   ]
 }
