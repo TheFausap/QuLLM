@@ -53,6 +53,13 @@ python3 experiments/tinystories_pair_probe.py --config configs/macbook_tinystori
 python3 experiments/summarize_phase_results.py runs/tinystories_pair_probe.csv
 ```
 
+The attention-component probe is:
+
+```bash
+python3 experiments/tinystories_attention_probe.py --config configs/macbook_tinystories_attention_probe.json
+python3 experiments/summarize_phase_results.py runs/tinystories_attention_probe.csv
+```
+
 ## Next Experiments
 
 1. Compare feature-state encoding against ID lookup embeddings on a tiny synthetic grammar task.

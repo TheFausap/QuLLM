@@ -152,3 +152,27 @@ This probe compares:
 - `real_diag_wide`: roughly parameter-matched to `complex_diag`.
 
 The important first question is whether frozen phase features beat frozen amplitude features. If they do not, compare `token_complex_signed` / `token_complex_role_signed` against `real_diag`: this asks whether a quantum-native normalized complex state parameterization can learn natural lexical structure once the readout preserves signed phase information.
+
+## TinyStories Attention Probe
+
+`experiments/tinystories_attention_probe.py` tests complex numbers inside an attention-like interaction rather than inside the tokenizer.
+
+The task is binary next-token discrimination:
+
+```text
+(context window, candidate next token) -> real candidate or unigram negative
+```
+
+Models:
+
+- `real_attention`: real candidate-to-context attention.
+- `complex_attention`: complex candidate-to-context attention with phase rotations and signed complex readout.
+- `complex_attention_halfdim`: roughly parameter-matched to `real_attention`.
+- `real_attention_wide`: roughly parameter-matched to `complex_attention`.
+
+Run on DGX:
+
+```bash
+python3 experiments/tinystories_attention_probe.py --config configs/dgx_tinystories_attention_probe.json --device cuda
+python3 experiments/summarize_phase_results.py runs/tinystories_attention_probe.csv
+```

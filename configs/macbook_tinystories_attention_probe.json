@@ -1,0 +1,17 @@
+{
+  "dataset": "roneneldan/TinyStories",
+  "split": "train",
+  "vocab_size": 8000,
+  "vocab_stories": 50000,
+  "max_train_examples": 500000,
+  "train_sizes": [50000, 200000, 500000],
+  "test_examples": 100000,
+  "context": 16,
+  "dim": 64,
+  "epochs": 3,
+  "batch_size": 512,
+  "learning_rate": 0.003,
+  "seed": 31,
+  "cache": "runs/cache/tinystories_macbook_attention.pt",
+  "models": ["real_attention", "complex_attention_halfdim", "complex_attention", "real_attention_wide"]
+}
