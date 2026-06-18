@@ -210,3 +210,10 @@ Phase-floor variant sweep:
 python3 experiments/tinystories_attention_probe.py --config configs/dgx_tinystories_attention_floor_sweep.json --device cuda
 python3 experiments/summarize_phase_results.py runs/tinystories_attention_floor_sweep.csv
 ```
+
+High-depth phase-floor sweep:
+
+```bash
+python3 experiments/tinystories_attention_probe.py --config configs/dgx_tinystories_attention_floor_highdepth.json --device cuda
+python3 experiments/summarize_phase_results.py runs/tinystories_attention_floor_highdepth.csv
+```

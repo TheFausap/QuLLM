@@ -78,6 +78,40 @@ complex_attention_nophase 0.6993
 
 Interpretation: complex numbers appear more valuable in the interaction/attention component than in the tokenizer. The phase effect is scale dependent and depends strongly on learned phase rotations. Signed complex readout works better than Born-style squared readout for this next-token discrimination task, although Born-style readout remains useful at scale.
 
+### Depth Behavior
+
+Stacked attention shows a non-monotonic depth regime.
+
+The regular complex stack peaks around 8 layers and then degrades:
+
+```text
+4M examples:
+complex_stack L8   0.8731
+complex_stack L12  0.8407
+complex_stack L16  0.6993
+complex_stack L24  0.7062
+complex_stack L32  0.7697
+```
+
+The phase-floor variant initially hurts, but unexpectedly enters a better high-depth regime:
+
+```text
+complex_floor L8   0.8597
+complex_floor L12  0.8160
+complex_floor L16  0.6977
+complex_floor L24  0.8147
+complex_floor L32  0.8819
+```
+
+At 32 layers, `complex_attention_stacked_floor` beats the real stacked baseline:
+
+```text
+complex_floor L32  0.8819
+real_stack L32     0.8697
+```
+
+The per-layer traces suggest this is not simply "larger phase is better." The floor model at 32 layers has lower aggregate phase magnitude than the regular stack, but has a late-layer phase ramp and lower residual mix. This points toward a depth-dependent phase transport regime that needs more focused sweeps.
+
 ## Current Research Direction
 
 The evidence now points away from forcing the tokenizer to be quantum-native early, and toward complex-valued contextual interaction layers:

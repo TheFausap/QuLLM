@@ -1,0 +1,19 @@
+{
+  "dataset": "roneneldan/TinyStories",
+  "split": "train",
+  "vocab_size": 50000,
+  "vocab_stories": 250000,
+  "max_train_examples": 4000000,
+  "train_sizes": [4000000],
+  "test_examples": 250000,
+  "context": 16,
+  "dim": 128,
+  "layer_values": [20, 24, 28, 32, 36, 40],
+  "epochs": 2,
+  "batch_size": 4096,
+  "learning_rate": 0.002,
+  "seed": 31,
+  "cache": "runs/cache/tinystories_dgx_attention.pt",
+  "models": ["complex_attention_stacked_floor", "real_attention_stacked"],
+  "out": "runs/tinystories_attention_floor_highdepth.csv"
+}
