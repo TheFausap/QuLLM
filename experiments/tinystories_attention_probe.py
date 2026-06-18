@@ -501,6 +501,30 @@ class ComplexAttentionStackedFloorProbe(ComplexAttentionStackedProbe):
         super().__init__(vocab_size, dim, context, layers, phase_init=0.05, min_mix=0.2)
 
 
+class ComplexAttentionStackedScheduledProbe(ComplexAttentionStackedProbe):
+    def __init__(self, vocab_size: int, dim: int, context: int, layers: int = 2) -> None:
+        nn.Module.__init__(self)
+        self.real = nn.Embedding(vocab_size, dim)
+        self.imag = nn.Embedding(vocab_size, dim)
+        self.pos_phase = nn.Embedding(context, dim)
+        scheduled_layers: list[ComplexAttentionLayer] = []
+        denom = max(1, layers - 1)
+        for idx in range(layers):
+            depth = idx / denom
+            phase_init = 0.015 + 0.085 * (depth * depth)
+            min_mix = 0.05 + 0.20 * (depth * depth)
+            scheduled_layers.append(ComplexAttentionLayer(dim, phase_init=phase_init, min_mix=min_mix))
+        self.layers = nn.ModuleList(scheduled_layers)
+        self.readout_phase = nn.Parameter(torch.zeros(dim))
+        self.real_weight = nn.Parameter(torch.tensor(1.0))
+        self.imag_weight = nn.Parameter(torch.tensor(0.0))
+        self.logit_scale = nn.Parameter(torch.tensor(1.0))
+        self.logit_bias = nn.Parameter(torch.tensor(0.0))
+        nn.init.normal_(self.real.weight, std=(2 * dim) ** -0.5)
+        nn.init.normal_(self.imag.weight, std=(2 * dim) ** -0.5)
+        nn.init.zeros_(self.pos_phase.weight)
+
+
 MODEL_TYPES = {
     "real_attention": RealAttentionProbe,
     "complex_attention": ComplexAttentionProbe,
@@ -511,6 +535,7 @@ MODEL_TYPES = {
     "real_attention_stacked": RealAttentionStackedProbe,
     "complex_attention_stacked": ComplexAttentionStackedProbe,
     "complex_attention_stacked_floor": ComplexAttentionStackedFloorProbe,
+    "complex_attention_stacked_scheduled": ComplexAttentionStackedScheduledProbe,
 }
 
 

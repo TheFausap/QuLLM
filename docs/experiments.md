@@ -217,3 +217,10 @@ High-depth phase-floor sweep:
 python3 experiments/tinystories_attention_probe.py --config configs/dgx_tinystories_attention_floor_highdepth.json --device cuda
 python3 experiments/summarize_phase_results.py runs/tinystories_attention_floor_highdepth.csv
 ```
+
+Scheduled late-phase sweep:
+
+```bash
+python3 experiments/tinystories_attention_probe.py --config configs/dgx_tinystories_attention_scheduled_sweep.json --device cuda
+python3 experiments/summarize_phase_results.py runs/tinystories_attention_scheduled_sweep.csv
+```
