@@ -112,6 +112,27 @@ real_stack L32     0.8697
 
 The per-layer traces suggest this is not simply "larger phase is better." The floor model at 32 layers has lower aggregate phase magnitude than the regular stack, but has a late-layer phase ramp and lower residual mix. This points toward a depth-dependent phase transport regime that needs more focused sweeps.
 
+The scheduled late-phase variant initially underperforms the floor variant, but crosses over at high depth:
+
+```text
+4M examples:
+scheduled L24  0.7177
+scheduled L28  0.7419
+scheduled L32  0.8019
+scheduled L36  0.8790
+scheduled L40  0.8847
+```
+
+At 40 layers, scheduled complex attention beats both floor complex attention and real stacked attention:
+
+```text
+scheduled_complex L40  0.8847
+floor_complex L40      0.8787
+real_stack L40         0.8714
+```
+
+This supports the "transport then transform" hypothesis: many early layers stay low-mix and low-phase, while later layers form a phase ramp.
+
 ## Current Research Direction
 
 The evidence now points away from forcing the tokenizer to be quantum-native early, and toward complex-valued contextual interaction layers:
