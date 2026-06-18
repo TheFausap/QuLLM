@@ -20,17 +20,21 @@ def main() -> None:
     args = parser.parse_args()
 
     path = Path(args.csv_path)
-    rows_by_group: dict[tuple[int, str], dict[str, dict[str, str]]] = defaultdict(dict)
+    rows_by_group: dict[tuple[int, str, str], dict[str, dict[str, str]]] = defaultdict(dict)
     with open(path, "r", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
         for row in reader:
             layers = row.get("layers", "")
-            rows_by_group[(int(row["train_size"]), layers)][row["model"]] = row
+            seed = row.get("seed", "")
+            rows_by_group[(int(row["train_size"]), layers, seed)][row["model"]] = row
 
     print(f"results: {path}")
     print()
-    for train_size, layers in sorted(rows_by_group, key=lambda item: (item[0], int(item[1] or "0"))):
-        results = rows_by_group[(train_size, layers)]
+    for train_size, layers, seed in sorted(
+        rows_by_group,
+        key=lambda item: (item[0], int(item[1] or "0"), int(item[2] or "0")),
+    ):
+        results = rows_by_group[(train_size, layers, seed)]
         reference_name = next(
             (
                 name
@@ -51,6 +55,8 @@ def main() -> None:
         header = f"train_size={train_size}"
         if layers:
             header += f" layers={layers}"
+        if seed:
+            header += f" seed={seed}"
         print(header)
         for model, row in sorted(results.items(), key=lambda item: item[0]):
             accuracy = float(row["accuracy"])

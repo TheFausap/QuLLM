@@ -398,7 +398,13 @@ class RealAttentionStackedProbe(nn.Module):
 
 
 class ComplexAttentionLayer(nn.Module):
-    def __init__(self, dim: int, phase_init: float = 0.0, min_mix: float = 0.0) -> None:
+    def __init__(
+        self,
+        dim: int,
+        phase_init: float = 0.0,
+        min_mix: float = 0.0,
+        force_zero_phase: bool = False,
+    ) -> None:
         super().__init__()
         self.q_phase = nn.Parameter(torch.zeros(dim))
         self.k_phase = nn.Parameter(torch.zeros(dim))
@@ -406,6 +412,7 @@ class ComplexAttentionLayer(nn.Module):
         self.out_phase = nn.Parameter(torch.zeros(dim))
         self.mix = nn.Parameter(torch.tensor(-2.0))
         self.min_mix = min_mix
+        self.force_zero_phase = force_zero_phase
         if phase_init > 0:
             for phase in (self.q_phase, self.k_phase, self.v_phase, self.out_phase):
                 nn.init.normal_(phase, std=phase_init)
@@ -428,16 +435,22 @@ class ComplexAttentionLayer(nn.Module):
         context_real: torch.Tensor,
         context_imag: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        q_real, q_imag = self.rotate(candidate_real, candidate_imag, self.q_phase)
-        k_real, k_imag = self.rotate(context_real, context_imag, self.k_phase)
-        v_real, v_imag = self.rotate(context_real, context_imag, self.v_phase)
+        if self.force_zero_phase:
+            q_real, q_imag = candidate_real, candidate_imag
+            k_real, k_imag = context_real, context_imag
+            v_real, v_imag = context_real, context_imag
+        else:
+            q_real, q_imag = self.rotate(candidate_real, candidate_imag, self.q_phase)
+            k_real, k_imag = self.rotate(context_real, context_imag, self.k_phase)
+            v_real, v_imag = self.rotate(context_real, context_imag, self.v_phase)
         q_real, q_imag = self.normalize(q_real, q_imag)
         k_real, k_imag = self.normalize(k_real, k_imag)
         compat = (q_real.unsqueeze(1) * k_real + q_imag.unsqueeze(1) * k_imag).sum(dim=-1)
         attn = torch.softmax(compat * math.sqrt(k_real.shape[-1]), dim=-1)
         pooled_real = (attn.unsqueeze(-1) * v_real).sum(dim=1)
         pooled_imag = (attn.unsqueeze(-1) * v_imag).sum(dim=1)
-        pooled_real, pooled_imag = self.rotate(pooled_real, pooled_imag, self.out_phase)
+        if not self.force_zero_phase:
+            pooled_real, pooled_imag = self.rotate(pooled_real, pooled_imag, self.out_phase)
         mix = self.min_mix + (1.0 - self.min_mix) * torch.sigmoid(self.mix)
         next_real = candidate_real + mix * pooled_real
         next_imag = candidate_imag + mix * pooled_imag
@@ -453,12 +466,22 @@ class ComplexAttentionStackedProbe(nn.Module):
         layers: int = 2,
         phase_init: float = 0.0,
         min_mix: float = 0.0,
+        force_zero_phase: bool = False,
     ) -> None:
         super().__init__()
         self.real = nn.Embedding(vocab_size, dim)
         self.imag = nn.Embedding(vocab_size, dim)
         self.pos_phase = nn.Embedding(context, dim)
-        self.layers = nn.ModuleList(ComplexAttentionLayer(dim, phase_init=phase_init, min_mix=min_mix) for _ in range(layers))
+        self.force_zero_phase = force_zero_phase
+        self.layers = nn.ModuleList(
+            ComplexAttentionLayer(
+                dim,
+                phase_init=phase_init,
+                min_mix=min_mix,
+                force_zero_phase=force_zero_phase,
+            )
+            for _ in range(layers)
+        )
         self.readout_phase = nn.Parameter(torch.zeros(dim))
         self.real_weight = nn.Parameter(torch.tensor(1.0))
         self.imag_weight = nn.Parameter(torch.tensor(0.0))
@@ -483,13 +506,15 @@ class ComplexAttentionStackedProbe(nn.Module):
         positions = torch.arange(context_ids.shape[1], device=context_ids.device)
         context_real = self.real(context_ids)
         context_imag = self.imag(context_ids)
-        context_real, context_imag = self.rotate(context_real, context_imag, self.pos_phase(positions))
+        if not self.force_zero_phase:
+            context_real, context_imag = self.rotate(context_real, context_imag, self.pos_phase(positions))
         candidate_base_real = self.real(candidate)
         candidate_base_imag = self.imag(candidate)
         candidate_real, candidate_imag = self.normalize(candidate_base_real, candidate_base_imag)
         for layer in self.layers:
             candidate_real, candidate_imag = layer(candidate_real, candidate_imag, context_real, context_imag)
-        candidate_real, candidate_imag = self.rotate(candidate_real, candidate_imag, self.readout_phase)
+        if not self.force_zero_phase:
+            candidate_real, candidate_imag = self.rotate(candidate_real, candidate_imag, self.readout_phase)
         inner_real = (candidate_real * candidate_base_real + candidate_imag * candidate_base_imag).sum(dim=-1)
         inner_imag = (candidate_real * candidate_base_imag - candidate_imag * candidate_base_real).sum(dim=-1)
         score = (self.real_weight * inner_real + self.imag_weight * inner_imag) / math.sqrt(candidate_real.shape[-1])
@@ -499,6 +524,19 @@ class ComplexAttentionStackedProbe(nn.Module):
 class ComplexAttentionStackedFloorProbe(ComplexAttentionStackedProbe):
     def __init__(self, vocab_size: int, dim: int, context: int, layers: int = 2) -> None:
         super().__init__(vocab_size, dim, context, layers, phase_init=0.05, min_mix=0.2)
+
+
+class ComplexAttentionStackedFloorDecohereProbe(ComplexAttentionStackedProbe):
+    def __init__(self, vocab_size: int, dim: int, context: int, layers: int = 2) -> None:
+        super().__init__(
+            vocab_size,
+            dim,
+            context,
+            layers,
+            phase_init=0.05,
+            min_mix=0.2,
+            force_zero_phase=True,
+        )
 
 
 class ComplexAttentionStackedScheduledProbe(ComplexAttentionStackedProbe):
@@ -535,6 +573,7 @@ MODEL_TYPES = {
     "real_attention_stacked": RealAttentionStackedProbe,
     "complex_attention_stacked": ComplexAttentionStackedProbe,
     "complex_attention_stacked_floor": ComplexAttentionStackedFloorProbe,
+    "complex_attention_stacked_floor_decohere": ComplexAttentionStackedFloorDecohereProbe,
     "complex_attention_stacked_scheduled": ComplexAttentionStackedScheduledProbe,
 }
 
@@ -616,6 +655,7 @@ def train_one(
     batch_size: int,
     learning_rate: float,
     device: torch.device,
+    seed: int,
 ) -> dict[str, Any]:
     model = MODEL_TYPES[model_name](vocab_size, dim, context, layers).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)
@@ -641,6 +681,7 @@ def train_one(
             "model": model_name,
             "train_size": count,
             "layers": layers,
+            "seed": seed,
             "trainable_params": trainable_parameter_count(model),
             "seconds": round(time.time() - started, 3),
         }
@@ -659,6 +700,7 @@ def write_results(path: Path, rows: list[dict[str, Any]]) -> None:
     fields = [
         "train_size",
         "layers",
+        "seed",
         "model",
         "accuracy",
         "loss",
@@ -703,6 +745,7 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=512)
     parser.add_argument("--learning-rate", type=float, default=3e-3)
     parser.add_argument("--seed", type=int, default=31)
+    parser.add_argument("--seeds", type=str, default=None)
     parser.add_argument("--cache", type=str, default=None)
     parser.add_argument(
         "--models",
@@ -731,6 +774,8 @@ def main() -> None:
     batch_size = int(config.get("batch_size", args.batch_size))
     learning_rate = float(config.get("learning_rate", args.learning_rate))
     seed = int(config.get("seed", args.seed))
+    seeds_config = config.get("seeds", args.seeds)
+    seeds = parse_ints(seeds_config) if seeds_config is not None else [seed]
     cache_path = config.get("cache", args.cache)
     out_path = str(config.get("out", args.out))
     models_raw = config.get("models", args.models)
@@ -745,7 +790,10 @@ def main() -> None:
     print(f"config={args.config or '<cli/defaults>'}")
     print(f"dataset={dataset_name} split={split} device={device}")
     print(f"models={','.join(models)}")
-    print(f"dim={dim} context={context} layers={','.join(str(item) for item in layer_values)} epochs={epochs} batch_size={batch_size}")
+    print(
+        f"dim={dim} context={context} layers={','.join(str(item) for item in layer_values)} "
+        f"seeds={','.join(str(item) for item in seeds)} epochs={epochs} batch_size={batch_size}"
+    )
 
     vocab_list, train_cpu, test_cpu = load_or_build_cached_data(
         cache_path=cache_path,
@@ -768,35 +816,38 @@ def main() -> None:
         print(f"\ntrain_size={train_size}")
         for layers in layer_values:
             print(f"  layers={layers}")
-            for model_name in models:
-                set_seed(seed)
-                row = train_one(
-                    model_name=model_name,
-                    train_data=train_data,
-                    test_data=test_data,
-                    vocab_size=len(vocab_list),
-                    dim=dim,
-                    context=context,
-                    layers=layers,
-                    epochs=epochs,
-                    batch_size=batch_size,
-                    learning_rate=learning_rate,
-                    device=device,
-                )
-                rows.append(row)
-                diag = ""
-                if row.get("mix_mean") is not None:
-                    diag = (
-                        f" mix={row['mix_mean']:.3f}"
-                        f" phase_abs={row['phase_abs_mean']:.3f}"
+            for run_seed in seeds:
+                print(f"    seed={run_seed}")
+                for model_name in models:
+                    set_seed(run_seed)
+                    row = train_one(
+                        model_name=model_name,
+                        train_data=train_data,
+                        test_data=test_data,
+                        vocab_size=len(vocab_list),
+                        dim=dim,
+                        context=context,
+                        layers=layers,
+                        epochs=epochs,
+                        batch_size=batch_size,
+                        learning_rate=learning_rate,
+                        device=device,
+                        seed=run_seed,
                     )
-                elif row.get("gate_mean") is not None:
-                    diag = f" gate={row['gate_mean']:.3f}"
-                print(
-                    f"    {model_name:24s} "
-                    f"acc={row['accuracy']:.4f} loss={row['loss']:.4f} "
-                    f"params={row['trainable_params']} seconds={row['seconds']}{diag}"
-                )
+                    rows.append(row)
+                    diag = ""
+                    if row.get("mix_mean") is not None:
+                        diag = (
+                            f" mix={row['mix_mean']:.3f}"
+                            f" phase_abs={row['phase_abs_mean']:.3f}"
+                        )
+                    elif row.get("gate_mean") is not None:
+                        diag = f" gate={row['gate_mean']:.3f}"
+                    print(
+                        f"      {model_name:38s} "
+                        f"acc={row['accuracy']:.4f} loss={row['loss']:.4f} "
+                        f"params={row['trainable_params']} seconds={row['seconds']}{diag}"
+                    )
 
     out = ROOT / out_path
     write_results(out, rows)
