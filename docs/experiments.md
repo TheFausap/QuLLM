@@ -245,3 +245,10 @@ Best-depth decohere and multi-seed control:
 python3 experiments/tinystories_attention_probe.py --config configs/dgx_tinystories_attention_decohere_bestdepths.json --device cuda
 python3 experiments/summarize_phase_results.py runs/tinystories_attention_decohere_bestdepths.csv
 ```
+
+The complex stack diagnostics report both the historical raw gate (`mix_mean`,
+`mix_by_layer`) and the actual residual mix used by the block
+(`mix_effective_mean`, `mix_effective_by_layer`). Use the effective mix columns
+when comparing floor and scheduled variants. `phase_active=0` marks the
+decohered twin where phase parameters remain in the model shape but are not used
+by the forward pass.

@@ -82,11 +82,32 @@ def main() -> None:
                     f" diff_neg={float(row['diff_group_negative_accuracy']):.4f}"
                 )
             diagnostics = ""
-            for label in ("mix_mean", "mix_min", "mix_max", "phase_abs_mean", "phase_abs_max", "gate_mean", "gate_min", "gate_max"):
+            phase_active = row.get("phase_active", "")
+            if phase_active:
+                diagnostics += f" phase_active={int(float(phase_active))}"
+            for label in (
+                "mix_mean",
+                "mix_min",
+                "mix_max",
+                "mix_effective_mean",
+                "mix_effective_min",
+                "mix_effective_max",
+                "phase_abs_mean",
+                "phase_abs_max",
+                "gate_mean",
+                "gate_min",
+                "gate_max",
+            ):
                 value = maybe_float(row.get(label, ""))
                 if value is not None:
                     diagnostics += f" {label}={value:.3f}"
-            for label in ("mix_by_layer", "phase_abs_by_layer", "phase_abs_max_by_layer", "gate_by_layer"):
+            for label in (
+                "mix_by_layer",
+                "mix_effective_by_layer",
+                "phase_abs_by_layer",
+                "phase_abs_max_by_layer",
+                "gate_by_layer",
+            ):
                 value = row.get(label, "")
                 if value:
                     diagnostics += f" {label}=[{value}]"

@@ -545,6 +545,7 @@ class ComplexAttentionStackedScheduledProbe(ComplexAttentionStackedProbe):
         self.real = nn.Embedding(vocab_size, dim)
         self.imag = nn.Embedding(vocab_size, dim)
         self.pos_phase = nn.Embedding(context, dim)
+        self.force_zero_phase = False
         scheduled_layers: list[ComplexAttentionLayer] = []
         denom = max(1, layers - 1)
         for idx in range(layers):
@@ -610,6 +611,12 @@ def model_diagnostics(model: nn.Module) -> dict[str, float | str]:
     diagnostics: dict[str, float | str] = {}
     if isinstance(model, ComplexAttentionStackedProbe):
         mix_values = torch.stack([torch.sigmoid(layer.mix.detach()) for layer in model.layers])
+        effective_mix_values = torch.stack(
+            [
+                layer.min_mix + (1.0 - layer.min_mix) * torch.sigmoid(layer.mix.detach())
+                for layer in model.layers
+            ]
+        )
         phase_layer_means: list[float] = []
         phase_layer_maxes: list[float] = []
         phase_tensors = []
@@ -626,12 +633,19 @@ def model_diagnostics(model: nn.Module) -> dict[str, float | str]:
             phase_layer_maxes.append(float(layer_phases.abs().max().item()))
             phase_tensors.append(layer_phases)
         phases = torch.cat([tensor.flatten() for tensor in phase_tensors])
+        diagnostics["phase_active"] = 0.0 if model.force_zero_phase else 1.0
         diagnostics["mix_mean"] = float(mix_values.mean().item())
         diagnostics["mix_min"] = float(mix_values.min().item())
         diagnostics["mix_max"] = float(mix_values.max().item())
+        diagnostics["mix_effective_mean"] = float(effective_mix_values.mean().item())
+        diagnostics["mix_effective_min"] = float(effective_mix_values.min().item())
+        diagnostics["mix_effective_max"] = float(effective_mix_values.max().item())
         diagnostics["phase_abs_mean"] = float(phases.abs().mean().item())
         diagnostics["phase_abs_max"] = float(phases.abs().max().item())
         diagnostics["mix_by_layer"] = _format_trace([float(value.item()) for value in mix_values])
+        diagnostics["mix_effective_by_layer"] = _format_trace(
+            [float(value.item()) for value in effective_mix_values]
+        )
         diagnostics["phase_abs_by_layer"] = _format_trace(phase_layer_means)
         diagnostics["phase_abs_max_by_layer"] = _format_trace(phase_layer_maxes)
     if isinstance(model, RealAttentionStackedProbe):
@@ -706,12 +720,17 @@ def write_results(path: Path, rows: list[dict[str, Any]]) -> None:
         "loss",
         "seconds",
         "trainable_params",
+        "phase_active",
         "mix_mean",
         "mix_min",
         "mix_max",
+        "mix_effective_mean",
+        "mix_effective_min",
+        "mix_effective_max",
         "phase_abs_mean",
         "phase_abs_max",
         "mix_by_layer",
+        "mix_effective_by_layer",
         "phase_abs_by_layer",
         "phase_abs_max_by_layer",
         "gate_mean",

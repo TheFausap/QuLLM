@@ -152,6 +152,10 @@ real L64       0.8695
 ```
 
 The best attribution test now targets the peak region with seeds and a decohered twin.
+For floor and scheduled variants, treat `mix_mean` as the historical raw gate
+trace and `mix_effective_mean` as the actual residual mix used in the forward
+pass. For decohered rows, `phase_active=0` means phase parameters are retained
+for model-shape parity but skipped by the forward pass.
 
 ## Current Research Direction
 
