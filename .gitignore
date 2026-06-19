@@ -8,8 +8,12 @@ __pycache__/
 venv/
 env/
 
-# Experiment outputs and dataset/example caches
-runs/
+# Experiment dataset/example caches
+runs/cache/
+runs/**/*.pt
+runs/**/*.bin
+runs/**/*.npy
+runs/**/*.npz
 
 # OS/editor noise
 .DS_Store
