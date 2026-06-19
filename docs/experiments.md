@@ -238,3 +238,10 @@ Decohere and multi-seed control:
 python3 experiments/tinystories_attention_probe.py --config configs/dgx_tinystories_attention_decohere_seeds.json --device cuda
 python3 experiments/summarize_phase_results.py runs/tinystories_attention_decohere_seeds.csv
 ```
+
+Best-depth decohere and multi-seed control:
+
+```bash
+python3 experiments/tinystories_attention_probe.py --config configs/dgx_tinystories_attention_decohere_bestdepths.json --device cuda
+python3 experiments/summarize_phase_results.py runs/tinystories_attention_decohere_bestdepths.csv
+```

@@ -133,6 +133,26 @@ real_stack L40         0.8714
 
 This supports the "transport then transform" hypothesis: many early layers stay low-mix and low-phase, while later layers form a phase ramp.
 
+The high-depth sweep showed this was not a single-depth accident. Complex models stabilize above the real baseline:
+
+```text
+4M examples:
+floor L44      0.8893
+floor L48      0.8865
+floor L56      0.8891
+floor L64      0.8888
+scheduled L44  0.8840
+scheduled L48  0.8864
+scheduled L56  0.8879
+scheduled L64  0.8867
+real L44       0.8702
+real L48       0.8709
+real L56       0.8709
+real L64       0.8695
+```
+
+The best attribution test now targets the peak region with seeds and a decohered twin.
+
 ## Current Research Direction
 
 The evidence now points away from forcing the tokenizer to be quantum-native early, and toward complex-valued contextual interaction layers:
