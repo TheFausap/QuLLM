@@ -174,6 +174,11 @@ Models:
 - `complex_attention_born`: uses Born-style squared compatibility/readout to compare against signed complex readout.
 - `real_attention_stacked`: several candidate-conditioned real attention blocks.
 - `complex_attention_stacked`: several candidate-conditioned complex phase-attention blocks.
+- `complex_attention_stacked_floor`: high-depth complex stack with a residual mix floor.
+- `complex_attention_stacked_floor_decohere`: historical zero-phase floor twin. This is a harsh ablation because it keeps forced deep mixing but removes the rotations that stabilize that recurrence.
+- `complex_attention_stacked_floor_decohere_free_mix`: zero-phase twin without the mix floor. This tests whether the historical decohere collapse was mainly forced-mix washout.
+- `complex_attention_stacked_floor_frozen_phase`: same floor stack with fixed random phase rotations. This tests learned phase transport against non-learned coherent transport.
+- `complex_attention_stacked_scheduled`: high-depth complex stack with layer-dependent phase/mix initialization.
 - `real_attention_wide`: roughly parameter-matched to `complex_attention`.
 
 Run on DGX:
@@ -246,9 +251,16 @@ python3 experiments/tinystories_attention_probe.py --config configs/dgx_tinystor
 python3 experiments/summarize_phase_results.py runs/tinystories_attention_decohere_bestdepths.csv
 ```
 
+Sharper decohere controls:
+
+```bash
+python3 experiments/tinystories_attention_probe.py --config configs/dgx_tinystories_attention_decohere_controls.json --device cuda
+python3 experiments/summarize_phase_results.py runs/tinystories_attention_decohere_controls.csv
+```
+
 The complex stack diagnostics report both the historical raw gate (`mix_mean`,
 `mix_by_layer`) and the actual residual mix used by the block
 (`mix_effective_mean`, `mix_effective_by_layer`). Use the effective mix columns
-when comparing floor and scheduled variants. `phase_active=0` marks the
-decohered twin where phase parameters remain in the model shape but are not used
-by the forward pass.
+when comparing floor and scheduled variants. `phase_active=0` marks zero-phase
+rows where phase rotations are skipped. `phase_trainable=0` marks rows where
+phase parameters are frozen or unused.

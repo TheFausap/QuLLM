@@ -151,11 +151,47 @@ real L56       0.8709
 real L64       0.8695
 ```
 
-The best attribution test now targets the peak region with seeds and a decohered twin.
-For floor and scheduled variants, treat `mix_mean` as the historical raw gate
-trace and `mix_effective_mean` as the actual residual mix used in the forward
-pass. For decohered rows, `phase_active=0` means phase parameters are retained
-for model-shape parity but skipped by the forward pass.
+The first peak-depth decoherence control was intentionally same-shape, but it
+turned out to be too destructive: `force_zero_phase=True` removes every
+q/k/v/out/position/readout rotation while retaining the floor-driven deep
+mix-and-normalize recurrence. The active-phase floor model stayed near 0.888
+accuracy, while this zero-phase twin collapsed to about 0.676:
+
+```text
+4M examples, mean over seeds 31/37/43:
+L44 floor      0.887956
+L44 decohere   0.676707
+L44 real       0.868973
+
+L56 floor      0.887972
+L56 decohere   0.676215
+L56 real       0.868396
+
+L64 floor      0.888943
+L64 decohere   0.675752
+L64 real       0.868027
+```
+
+Paired gaps were stable, but they should be read carefully:
+
+```text
+floor - zero-phase floor twin:  +0.211 to +0.213
+floor - real stacked:           +0.019 to +0.021
+scheduled - real stacked:       +0.017 to +0.020
+```
+
+Interpretation: removing active phase transport from this particular complex
+stack destroys the effect, which means phase is stabilizing the architecture's
+deep recurrence. It does not mean the general phase-free ceiling is 0.676,
+because `real_attention_stacked` already reaches about 0.868. The more
+conservative bound for complex/coherent advantage on this task is therefore the
+gap to the best competent phase-free control, currently about +0.02. The next
+control run adds a zero-phase free-mix variant and a frozen-random-phase variant
+to separate "phase prevents washout" from "learned phase improves over a
+competent phase-free model." For floor and scheduled variants, treat `mix_mean`
+as the historical raw gate trace and `mix_effective_mean` as the actual residual
+mix used in the forward pass. For decohered rows, `phase_active=0` means phase
+rotations are skipped by the forward pass.
 
 ## Current Research Direction
 

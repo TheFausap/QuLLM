@@ -404,18 +404,23 @@ class ComplexAttentionLayer(nn.Module):
         phase_init: float = 0.0,
         min_mix: float = 0.0,
         force_zero_phase: bool = False,
+        freeze_phase: bool = False,
+        mix_init: float = -2.0,
     ) -> None:
         super().__init__()
         self.q_phase = nn.Parameter(torch.zeros(dim))
         self.k_phase = nn.Parameter(torch.zeros(dim))
         self.v_phase = nn.Parameter(torch.zeros(dim))
         self.out_phase = nn.Parameter(torch.zeros(dim))
-        self.mix = nn.Parameter(torch.tensor(-2.0))
+        self.mix = nn.Parameter(torch.tensor(mix_init))
         self.min_mix = min_mix
         self.force_zero_phase = force_zero_phase
         if phase_init > 0:
             for phase in (self.q_phase, self.k_phase, self.v_phase, self.out_phase):
                 nn.init.normal_(phase, std=phase_init)
+        if freeze_phase:
+            for phase in (self.q_phase, self.k_phase, self.v_phase, self.out_phase):
+                phase.requires_grad_(False)
 
     @staticmethod
     def rotate(real: torch.Tensor, imag: torch.Tensor, phase: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -467,18 +472,23 @@ class ComplexAttentionStackedProbe(nn.Module):
         phase_init: float = 0.0,
         min_mix: float = 0.0,
         force_zero_phase: bool = False,
+        freeze_phase: bool = False,
+        mix_init: float = -2.0,
     ) -> None:
         super().__init__()
         self.real = nn.Embedding(vocab_size, dim)
         self.imag = nn.Embedding(vocab_size, dim)
         self.pos_phase = nn.Embedding(context, dim)
         self.force_zero_phase = force_zero_phase
+        self.phase_trainable = not freeze_phase and not force_zero_phase
         self.layers = nn.ModuleList(
             ComplexAttentionLayer(
                 dim,
                 phase_init=phase_init,
                 min_mix=min_mix,
                 force_zero_phase=force_zero_phase,
+                freeze_phase=freeze_phase or force_zero_phase,
+                mix_init=mix_init,
             )
             for _ in range(layers)
         )
@@ -490,6 +500,9 @@ class ComplexAttentionStackedProbe(nn.Module):
         nn.init.normal_(self.real.weight, std=(2 * dim) ** -0.5)
         nn.init.normal_(self.imag.weight, std=(2 * dim) ** -0.5)
         nn.init.zeros_(self.pos_phase.weight)
+        if freeze_phase or force_zero_phase:
+            self.pos_phase.weight.requires_grad_(False)
+            self.readout_phase.requires_grad_(False)
 
     @staticmethod
     def rotate(real: torch.Tensor, imag: torch.Tensor, phase: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -539,6 +552,32 @@ class ComplexAttentionStackedFloorDecohereProbe(ComplexAttentionStackedProbe):
         )
 
 
+class ComplexAttentionStackedFloorDecohereFreeMixProbe(ComplexAttentionStackedProbe):
+    def __init__(self, vocab_size: int, dim: int, context: int, layers: int = 2) -> None:
+        super().__init__(
+            vocab_size,
+            dim,
+            context,
+            layers,
+            phase_init=0.0,
+            min_mix=0.0,
+            force_zero_phase=True,
+        )
+
+
+class ComplexAttentionStackedFloorFrozenPhaseProbe(ComplexAttentionStackedProbe):
+    def __init__(self, vocab_size: int, dim: int, context: int, layers: int = 2) -> None:
+        super().__init__(
+            vocab_size,
+            dim,
+            context,
+            layers,
+            phase_init=0.05,
+            min_mix=0.2,
+            freeze_phase=True,
+        )
+
+
 class ComplexAttentionStackedScheduledProbe(ComplexAttentionStackedProbe):
     def __init__(self, vocab_size: int, dim: int, context: int, layers: int = 2) -> None:
         nn.Module.__init__(self)
@@ -546,6 +585,7 @@ class ComplexAttentionStackedScheduledProbe(ComplexAttentionStackedProbe):
         self.imag = nn.Embedding(vocab_size, dim)
         self.pos_phase = nn.Embedding(context, dim)
         self.force_zero_phase = False
+        self.phase_trainable = True
         scheduled_layers: list[ComplexAttentionLayer] = []
         denom = max(1, layers - 1)
         for idx in range(layers):
@@ -575,6 +615,8 @@ MODEL_TYPES = {
     "complex_attention_stacked": ComplexAttentionStackedProbe,
     "complex_attention_stacked_floor": ComplexAttentionStackedFloorProbe,
     "complex_attention_stacked_floor_decohere": ComplexAttentionStackedFloorDecohereProbe,
+    "complex_attention_stacked_floor_decohere_free_mix": ComplexAttentionStackedFloorDecohereFreeMixProbe,
+    "complex_attention_stacked_floor_frozen_phase": ComplexAttentionStackedFloorFrozenPhaseProbe,
     "complex_attention_stacked_scheduled": ComplexAttentionStackedScheduledProbe,
 }
 
@@ -634,6 +676,7 @@ def model_diagnostics(model: nn.Module) -> dict[str, float | str]:
             phase_tensors.append(layer_phases)
         phases = torch.cat([tensor.flatten() for tensor in phase_tensors])
         diagnostics["phase_active"] = 0.0 if model.force_zero_phase else 1.0
+        diagnostics["phase_trainable"] = 1.0 if getattr(model, "phase_trainable", True) else 0.0
         diagnostics["mix_mean"] = float(mix_values.mean().item())
         diagnostics["mix_min"] = float(mix_values.min().item())
         diagnostics["mix_max"] = float(mix_values.max().item())
@@ -721,6 +764,7 @@ def write_results(path: Path, rows: list[dict[str, Any]]) -> None:
         "seconds",
         "trainable_params",
         "phase_active",
+        "phase_trainable",
         "mix_mean",
         "mix_min",
         "mix_max",

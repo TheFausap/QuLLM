@@ -85,6 +85,9 @@ def main() -> None:
             phase_active = row.get("phase_active", "")
             if phase_active:
                 diagnostics += f" phase_active={int(float(phase_active))}"
+            phase_trainable = row.get("phase_trainable", "")
+            if phase_trainable:
+                diagnostics += f" phase_trainable={int(float(phase_trainable))}"
             for label in (
                 "mix_mean",
                 "mix_min",
