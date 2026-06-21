@@ -620,6 +620,7 @@ MODEL_TYPES = {
     "complex_attention_stacked_scheduled": ComplexAttentionStackedScheduledProbe,
 }
 
+import experiments.coherence_isolation  # noqa: F401  (registers _pos variants)
 
 @torch.no_grad()
 def evaluate(
