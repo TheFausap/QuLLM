@@ -151,47 +151,55 @@ real L56       0.8709
 real L64       0.8695
 ```
 
-The first peak-depth decoherence control was intentionally same-shape, but it
-turned out to be too destructive: `force_zero_phase=True` removes every
-q/k/v/out/position/readout rotation while retaining the floor-driven deep
-mix-and-normalize recurrence. The active-phase floor model stayed near 0.888
-accuracy, while this zero-phase twin collapsed to about 0.676:
+The peak-depth control run separated learned phase transport from several
+weaker alternatives. The active-phase floor model stayed near 0.888 accuracy,
+while zero-phase and frozen-phase variants all collapsed to roughly 0.66-0.68:
 
 ```text
 4M examples, mean over seeds 31/37/43:
-L44 floor      0.887956
-L44 decohere   0.676707
-L44 real       0.868973
+L44 floor          0.887956
+L44 scheduled      0.885909
+L44 real           0.868973
+L44 decohere       0.676707
+L44 free_mix       0.663848
+L44 frozen_phase   0.680288
 
-L56 floor      0.887972
-L56 decohere   0.676215
-L56 real       0.868396
+L56 floor          0.887972
+L56 scheduled      0.887680
+L56 real           0.868396
+L56 decohere       0.676215
+L56 free_mix       0.669793
+L56 frozen_phase   0.675879
 
-L64 floor      0.888943
-L64 decohere   0.675752
-L64 real       0.868027
+L64 floor          0.888943
+L64 scheduled      0.887731
+L64 real           0.868027
+L64 decohere       0.675752
+L64 free_mix       0.671977
+L64 frozen_phase   0.677192
 ```
 
-Paired gaps were stable, but they should be read carefully:
+Paired gaps were stable:
 
 ```text
-floor - zero-phase floor twin:  +0.211 to +0.213
-floor - real stacked:           +0.019 to +0.021
-scheduled - real stacked:       +0.017 to +0.020
+floor - real stacked:        +0.019 to +0.021
+scheduled - real stacked:    +0.017 to +0.020
+floor - decohere:            +0.211 to +0.213
+floor - free_mix:            +0.217 to +0.224
+floor - frozen_phase:        +0.208 to +0.212
 ```
 
-Interpretation: removing active phase transport from this particular complex
-stack destroys the effect, which means phase is stabilizing the architecture's
-deep recurrence. It does not mean the general phase-free ceiling is 0.676,
-because `real_attention_stacked` already reaches about 0.868. The more
-conservative bound for complex/coherent advantage on this task is therefore the
-gap to the best competent phase-free control, currently about +0.02. The next
-control run adds a zero-phase free-mix variant and a frozen-random-phase variant
-to separate "phase prevents washout" from "learned phase improves over a
-competent phase-free model." For floor and scheduled variants, treat `mix_mean`
-as the historical raw gate trace and `mix_effective_mean` as the actual residual
-mix used in the forward pass. For decohered rows, `phase_active=0` means phase
-rotations are skipped by the forward pass.
+Interpretation: learned phase rotations are load-bearing inside this deep
+complex stack. Removing phase, removing the mix floor, or keeping only fixed
+random phase transport all fail. This does not mean the general phase-free
+ceiling is 0.676, because `real_attention_stacked` already reaches about 0.868.
+The conservative cross-architecture advantage on this task is therefore the gap
+to the best competent phase-free control, currently about +0.02, while the
+within-complex-stack value of trainable phase transport is about +0.21. For
+floor and scheduled variants, treat `mix_mean` as the historical raw gate trace
+and `mix_effective_mean` as the actual residual mix used in the forward pass.
+For decohered rows, `phase_active=0` means phase rotations are skipped by the
+forward pass.
 
 ## Current Research Direction
 
