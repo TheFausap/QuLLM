@@ -258,6 +258,28 @@ python3 experiments/tinystories_attention_probe.py --config configs/dgx_tinystor
 python3 experiments/summarize_phase_results.py runs/tinystories_attention_decohere_controls.csv
 ```
 
+Position-aware coherence isolation:
+
+```bash
+python3 experiments/tinystories_attention_probe.py --config configs/dgx_tinystories_attention_decohere_controls_pos.json --device cuda
+python3 experiments/summarize_phase_results.py runs/tinystories_attention_decohere_controls_pos.csv
+```
+
+Data-axis coherence sweep:
+
+```bash
+python3 experiments/tinystories_attention_probe.py --config configs/dgx_tinystories_attention_coherence_data_axis.json --device cuda
+python3 experiments/summarize_phase_results.py runs/tinystories_attention_coherence_data_axis.csv
+```
+
+The data-axis sweep fixes depth at 64 and varies both train size and
+`hard_negative_rate`. `hard_negative_rate=0.0` uses unigram negatives.
+`hard_negative_rate=1.0` uses in-context wrong-token negatives when possible,
+which creates a more position-sensitive discrimination task. Watch
+`loss_bits`, especially the paired coherent-minus-decohered gap, to test whether
+the small coherence advantage widens as the task carries more relational
+structure.
+
 The complex stack diagnostics report both the historical raw gate (`mix_mean`,
 `mix_by_layer`) and the actual residual mix used by the block
 (`mix_effective_mean`, `mix_effective_by_layer`). Use the effective mix columns

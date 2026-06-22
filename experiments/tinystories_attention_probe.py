@@ -77,11 +77,35 @@ def build_vocab(dataset_name: str, split: str, vocab_size: int, vocab_stories: i
     return ["<unk>"] + [token for token, _count in counts.most_common(vocab_size - 1)]
 
 
-def sample_negative(unigram: torch.Tensor, forbidden: int) -> int:
+def sample_unigram_negative(unigram: torch.Tensor, forbidden: int) -> int:
     while True:
         candidate = int(torch.multinomial(unigram, 1).item())
         if candidate != forbidden:
             return candidate
+
+
+def sample_context_negative(
+    context_ids: list[int],
+    unigram: torch.Tensor,
+    forbidden: int,
+    rng: random.Random,
+) -> int:
+    candidates = [token_id for token_id in context_ids if token_id != forbidden]
+    if not candidates:
+        return sample_unigram_negative(unigram, forbidden)
+    return candidates[rng.randrange(len(candidates))]
+
+
+def sample_negative(
+    context_ids: list[int],
+    unigram: torch.Tensor,
+    forbidden: int,
+    hard_negative_rate: float,
+    rng: random.Random,
+) -> int:
+    if hard_negative_rate > 0 and rng.random() < hard_negative_rate:
+        return sample_context_negative(context_ids, unigram, forbidden, rng)
+    return sample_unigram_negative(unigram, forbidden)
 
 
 def tensorize(
@@ -105,8 +129,9 @@ def build_examples(
     max_train_examples: int,
     test_examples: int,
     seed: int,
+    hard_negative_rate: float,
 ) -> tuple[tuple[torch.Tensor, torch.Tensor, torch.Tensor], tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
-    del seed
+    rng = random.Random(seed)
     counts = torch.ones(len(vocab), dtype=torch.float32)
     train_rows: list[tuple[list[int], int, int]] = []
     test_rows: list[tuple[list[int], int, int]] = []
@@ -130,7 +155,7 @@ def build_examples(
                 return tensorize(train_rows), tensorize(test_rows)
 
             rows.append((ctx, target, 1))
-            rows.append((ctx, sample_negative(unigram, target), 0))
+            rows.append((ctx, sample_negative(ctx, unigram, target, hard_negative_rate, rng), 0))
 
             if len(train_rows) + len(test_rows) >= target_total:
                 return tensorize(train_rows[:max_train_examples]), tensorize(test_rows[:test_examples])
@@ -147,6 +172,7 @@ def cache_metadata(
     max_train_examples: int,
     test_examples: int,
     seed: int,
+    hard_negative_rate: float,
 ) -> dict[str, Any]:
     return {
         "run_version": RUN_VERSION,
@@ -158,7 +184,30 @@ def cache_metadata(
         "max_train_examples": max_train_examples,
         "test_examples": test_examples,
         "seed": seed,
+        "hard_negative_rate": hard_negative_rate,
     }
+
+
+def cache_path_for_hard_negative_rate(cache_path: str | None, hard_negative_rate: float) -> str | None:
+    if cache_path is None:
+        return None
+    if hard_negative_rate == 0:
+        return cache_path
+    path = Path(cache_path)
+    suffix = "".join(path.suffixes)
+    stem = path.name[: -len(suffix)] if suffix else path.name
+    rate_tag = f"hard{int(round(hard_negative_rate * 100)):03d}"
+    return str(path.with_name(f"{stem}_{rate_tag}{suffix}"))
+
+
+def cache_metadata_matches(found: dict[str, Any], expected: dict[str, Any]) -> bool:
+    if found == expected:
+        return True
+    if expected.get("hard_negative_rate", 0.0) != 0:
+        return False
+    legacy_expected = dict(expected)
+    legacy_expected.pop("hard_negative_rate", None)
+    return found == legacy_expected
 
 
 def load_or_build_cached_data(
@@ -171,6 +220,7 @@ def load_or_build_cached_data(
     max_train_examples: int,
     test_examples: int,
     seed: int,
+    hard_negative_rate: float,
 ) -> tuple[list[str], tuple[torch.Tensor, torch.Tensor, torch.Tensor], tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
     expected = cache_metadata(
         dataset_name,
@@ -181,13 +231,14 @@ def load_or_build_cached_data(
         max_train_examples,
         test_examples,
         seed,
+        hard_negative_rate,
     )
     if cache_path:
         path = ROOT / cache_path
         if path.exists():
             print(f"loading cached examples from {path}")
             payload = torch.load(path, map_location="cpu", weights_only=False)
-            if payload.get("metadata") == expected:
+            if cache_metadata_matches(payload.get("metadata"), expected):
                 return payload["vocab"], payload["train"], payload["test"]
             print("cache metadata mismatch; rebuilding examples")
 
@@ -205,6 +256,7 @@ def load_or_build_cached_data(
         max_train_examples=max_train_examples,
         test_examples=test_examples,
         seed=seed,
+        hard_negative_rate=hard_negative_rate,
     )
 
     if cache_path:
@@ -639,7 +691,8 @@ def evaluate(
         logits = model(contexts[batch], candidates[batch])
         loss_sum += float(F.binary_cross_entropy_with_logits(logits, labels[batch], reduction="sum").item())
         correct += ((torch.sigmoid(logits) >= 0.5) == labels[batch].bool()).sum().item()
-    return {"loss": loss_sum / total, "accuracy": correct / total}
+    loss = loss_sum / total
+    return {"loss": loss, "loss_bits": loss / math.log(2), "accuracy": correct / total}
 
 
 def trainable_parameter_count(model: nn.Module) -> int:
@@ -715,6 +768,7 @@ def train_one(
     learning_rate: float,
     device: torch.device,
     seed: int,
+    hard_negative_rate: float,
 ) -> dict[str, Any]:
     model = MODEL_TYPES[model_name](vocab_size, dim, context, layers).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)
@@ -741,6 +795,7 @@ def train_one(
             "train_size": count,
             "layers": layers,
             "seed": seed,
+            "hard_negative_rate": hard_negative_rate,
             "trainable_params": trainable_parameter_count(model),
             "seconds": round(time.time() - started, 3),
         }
@@ -760,9 +815,11 @@ def write_results(path: Path, rows: list[dict[str, Any]]) -> None:
         "train_size",
         "layers",
         "seed",
+        "hard_negative_rate",
         "model",
         "accuracy",
         "loss",
+        "loss_bits",
         "seconds",
         "trainable_params",
         "phase_active",
@@ -811,6 +868,8 @@ def main() -> None:
     parser.add_argument("--learning-rate", type=float, default=3e-3)
     parser.add_argument("--seed", type=int, default=31)
     parser.add_argument("--seeds", type=str, default=None)
+    parser.add_argument("--hard-negative-rate", type=float, default=0.0)
+    parser.add_argument("--hard-negative-rates", type=str, default=None)
     parser.add_argument("--cache", type=str, default=None)
     parser.add_argument(
         "--models",
@@ -841,6 +900,15 @@ def main() -> None:
     seed = int(config.get("seed", args.seed))
     seeds_config = config.get("seeds", args.seeds)
     seeds = parse_ints(seeds_config) if seeds_config is not None else [seed]
+    hard_rate = float(config.get("hard_negative_rate", args.hard_negative_rate))
+    hard_rates_config = config.get("hard_negative_rates", args.hard_negative_rates)
+    hard_negative_rates = (
+        [float(item) for item in hard_rates_config]
+        if isinstance(hard_rates_config, list)
+        else [float(item.strip()) for item in hard_rates_config.split(",") if item.strip()]
+        if hard_rates_config is not None
+        else [hard_rate]
+    )
     cache_path = config.get("cache", args.cache)
     out_path = str(config.get("out", args.out))
     models_raw = config.get("models", args.models)
@@ -857,62 +925,72 @@ def main() -> None:
     print(f"models={','.join(models)}")
     print(
         f"dim={dim} context={context} layers={','.join(str(item) for item in layer_values)} "
-        f"seeds={','.join(str(item) for item in seeds)} epochs={epochs} batch_size={batch_size}"
+        f"seeds={','.join(str(item) for item in seeds)} "
+        f"hard_negative_rates={','.join(f'{item:.2f}' for item in hard_negative_rates)} "
+        f"epochs={epochs} batch_size={batch_size}"
     )
-
-    vocab_list, train_cpu, test_cpu = load_or_build_cached_data(
-        cache_path=cache_path,
-        dataset_name=dataset_name,
-        split=split,
-        vocab_size=vocab_size,
-        vocab_stories=vocab_stories,
-        context=context,
-        max_train_examples=max_train_examples,
-        test_examples=test_examples,
-        seed=seed,
-    )
-    print(f"train_examples={train_cpu[2].numel()} test_examples={test_cpu[2].numel()} vocab_size={len(vocab_list)}")
-    test_data = move_dataset(test_cpu, device)
 
     rows: list[dict[str, Any]] = []
-    for train_size in train_sizes:
-        train_data = tuple(tensor[:train_size] for tensor in train_cpu)
-        train_data = move_dataset(train_data, device)
-        print(f"\ntrain_size={train_size}")
-        for layers in layer_values:
-            print(f"  layers={layers}")
-            for run_seed in seeds:
-                print(f"    seed={run_seed}")
-                for model_name in models:
-                    set_seed(run_seed)
-                    row = train_one(
-                        model_name=model_name,
-                        train_data=train_data,
-                        test_data=test_data,
-                        vocab_size=len(vocab_list),
-                        dim=dim,
-                        context=context,
-                        layers=layers,
-                        epochs=epochs,
-                        batch_size=batch_size,
-                        learning_rate=learning_rate,
-                        device=device,
-                        seed=run_seed,
-                    )
-                    rows.append(row)
-                    diag = ""
-                    if row.get("mix_mean") is not None:
-                        diag = (
-                            f" mix={row['mix_mean']:.3f}"
-                            f" phase_abs={row['phase_abs_mean']:.3f}"
+    for hard_negative_rate in hard_negative_rates:
+        rate_cache_path = cache_path_for_hard_negative_rate(cache_path, hard_negative_rate)
+        vocab_list, train_cpu, test_cpu = load_or_build_cached_data(
+            cache_path=rate_cache_path,
+            dataset_name=dataset_name,
+            split=split,
+            vocab_size=vocab_size,
+            vocab_stories=vocab_stories,
+            context=context,
+            max_train_examples=max_train_examples,
+            test_examples=test_examples,
+            seed=seed,
+            hard_negative_rate=hard_negative_rate,
+        )
+        print(
+            f"train_examples={train_cpu[2].numel()} test_examples={test_cpu[2].numel()} "
+            f"vocab_size={len(vocab_list)} hard_negative_rate={hard_negative_rate:.2f}"
+        )
+        test_data = move_dataset(test_cpu, device)
+
+        for train_size in train_sizes:
+            train_data = tuple(tensor[:train_size] for tensor in train_cpu)
+            train_data = move_dataset(train_data, device)
+            print(f"\ntrain_size={train_size} hard_negative_rate={hard_negative_rate:.2f}")
+            for layers in layer_values:
+                print(f"  layers={layers}")
+                for run_seed in seeds:
+                    print(f"    seed={run_seed}")
+                    for model_name in models:
+                        set_seed(run_seed)
+                        row = train_one(
+                            model_name=model_name,
+                            train_data=train_data,
+                            test_data=test_data,
+                            vocab_size=len(vocab_list),
+                            dim=dim,
+                            context=context,
+                            layers=layers,
+                            epochs=epochs,
+                            batch_size=batch_size,
+                            learning_rate=learning_rate,
+                            device=device,
+                            seed=run_seed,
+                            hard_negative_rate=hard_negative_rate,
                         )
-                    elif row.get("gate_mean") is not None:
-                        diag = f" gate={row['gate_mean']:.3f}"
-                    print(
-                        f"      {model_name:38s} "
-                        f"acc={row['accuracy']:.4f} loss={row['loss']:.4f} "
-                        f"params={row['trainable_params']} seconds={row['seconds']}{diag}"
-                    )
+                        rows.append(row)
+                        diag = ""
+                        if row.get("mix_mean") is not None:
+                            diag = (
+                                f" mix={row['mix_mean']:.3f}"
+                                f" phase_abs={row['phase_abs_mean']:.3f}"
+                            )
+                        elif row.get("gate_mean") is not None:
+                            diag = f" gate={row['gate_mean']:.3f}"
+                        print(
+                            f"      {model_name:38s} "
+                            f"acc={row['accuracy']:.4f} loss={row['loss']:.4f} "
+                            f"bits={row['loss_bits']:.4f} "
+                            f"params={row['trainable_params']} seconds={row['seconds']}{diag}"
+                        )
 
     out = ROOT / out_path
     write_results(out, rows)

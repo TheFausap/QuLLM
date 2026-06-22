@@ -20,21 +20,22 @@ def main() -> None:
     args = parser.parse_args()
 
     path = Path(args.csv_path)
-    rows_by_group: dict[tuple[int, str, str], dict[str, dict[str, str]]] = defaultdict(dict)
+    rows_by_group: dict[tuple[int, str, str, str], dict[str, dict[str, str]]] = defaultdict(dict)
     with open(path, "r", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
         for row in reader:
             layers = row.get("layers", "")
             seed = row.get("seed", "")
-            rows_by_group[(int(row["train_size"]), layers, seed)][row["model"]] = row
+            hard_negative_rate = row.get("hard_negative_rate", "")
+            rows_by_group[(int(row["train_size"]), layers, seed, hard_negative_rate)][row["model"]] = row
 
     print(f"results: {path}")
     print()
-    for train_size, layers, seed in sorted(
+    for train_size, layers, seed, hard_negative_rate in sorted(
         rows_by_group,
-        key=lambda item: (item[0], int(item[1] or "0"), int(item[2] or "0")),
+        key=lambda item: (item[0], float(item[3] or "0"), int(item[1] or "0"), int(item[2] or "0")),
     ):
-        results = rows_by_group[(train_size, layers, seed)]
+        results = rows_by_group[(train_size, layers, seed, hard_negative_rate)]
         reference_name = next(
             (
                 name
@@ -57,6 +58,8 @@ def main() -> None:
             header += f" layers={layers}"
         if seed:
             header += f" seed={seed}"
+        if hard_negative_rate:
+            header += f" hard_negative_rate={float(hard_negative_rate):.2f}"
         print(header)
         for model, row in sorted(results.items(), key=lambda item: item[0]):
             accuracy = float(row["accuracy"])
@@ -65,6 +68,10 @@ def main() -> None:
                 gap = f"  {reference_name}_gap={reference - accuracy:+.4f}"
             params = row.get("trainable_params", "")
             param_text = f" params={params}" if params else ""
+            loss = row.get("loss", "")
+            loss_text = f" loss={float(loss):.4f}" if loss else ""
+            loss_bits = row.get("loss_bits", "")
+            bits_text = f" loss_bits={float(loss_bits):.4f}" if loss_bits else ""
             phase_mean_error = row.get("phase_mean_error", "")
             phase_max_error = row.get("phase_max_error", "")
             phase_text = ""
@@ -116,7 +123,7 @@ def main() -> None:
                     diagnostics += f" {label}=[{value}]"
             print(
                 f"  {model:26s} accuracy={accuracy:.4f}"
-                f"{gap}{param_text}{phase_text}{rule_text}{breakdown}{diagnostics}"
+                f"{gap}{loss_text}{bits_text}{param_text}{phase_text}{rule_text}{breakdown}{diagnostics}"
             )
         print()
 
