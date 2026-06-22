@@ -603,6 +603,7 @@ class ComplexAttentionStackedScheduledProbe(ComplexAttentionStackedProbe):
         nn.init.normal_(self.imag.weight, std=(2 * dim) ** -0.5)
         nn.init.zeros_(self.pos_phase.weight)
 
+import experiments.coherence_isolation as COHI # noqa: F401  (registers _pos variants)
 
 MODEL_TYPES = {
     "real_attention": RealAttentionProbe,
@@ -618,9 +619,9 @@ MODEL_TYPES = {
     "complex_attention_stacked_floor_decohere_free_mix": ComplexAttentionStackedFloorDecohereFreeMixProbe,
     "complex_attention_stacked_floor_frozen_phase": ComplexAttentionStackedFloorFrozenPhaseProbe,
     "complex_attention_stacked_scheduled": ComplexAttentionStackedScheduledProbe,
+    "complex_attention_stacked_floor_pos": COHI.CoherentFloorPosProbe,
+    "complex_attention_stacked_floor_pos_decohere": COHI.DecohereFloorPosProbe, 
 }
-
-import experiments.coherence_isolation  # noqa: F401  (registers _pos variants)
 
 @torch.no_grad()
 def evaluate(
